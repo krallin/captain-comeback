@@ -34,6 +34,7 @@ class RestartEngine(object):
 
     def run(self):
         # TODO: Exit everything when this fails
+        logger.info("ready to restart containers")
         while True:
             message = self.queue.get()
             if isinstance(message, RestartRequestedMessage):

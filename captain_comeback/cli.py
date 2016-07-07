@@ -24,11 +24,14 @@ def main(root_cg_path, sync_target_interval, restart_grace_period):
     job_queue = queue.Queue()
     index = CgroupIndex(root_cg_path, epl, job_queue)
 
+    threading.current_thread().name = "index"
+
     restarter = RestartEngine(job_queue, restart_grace_period)
     restarter_thread = threading.Thread(target=restarter.run, name="restarter")
     restarter_thread.daemon = True
     restarter_thread.start()
 
+    logger.info("ready to sync")
     while True:
         index.sync()
         next_sync = time.time() + sync_target_interval
