@@ -3,14 +3,16 @@ import os
 import shutil
 import tempfile
 import unittest
+from six.moves import queue
 
-import main as captain_comeback
+from captain_comeback.cgroup import Cgroup
 
 
 class TestCgroupMonitor(unittest.TestCase):
     def setUp(self):
         self.mock_cg = tempfile.mkdtemp()
-        self.monitor = captain_comeback.CgroupMonitor(self.mock_cg)
+        self.monitor = Cgroup(self.mock_cg)
+        self.queue = queue.Queue()
 
     def tearDown(self):
         shutil.rmtree(self.mock_cg)
@@ -51,7 +53,7 @@ class TestCgroupMonitor(unittest.TestCase):
         self.write_memory_limit(1024)
 
         self.monitor.open()
-        self.monitor.wakeup()
+        self.monitor.wakeup(self.queue)
         self.monitor.close()
 
         with open(self.cg_path("memory.oom_control")) as f:
@@ -62,7 +64,7 @@ class TestCgroupMonitor(unittest.TestCase):
         self.write_memory_limit(1024)
 
         self.monitor.open()
-        self.monitor.wakeup()
+        self.monitor.wakeup(self.queue)
         self.monitor.close()
 
         # File shoud not have been touched
@@ -74,30 +76,27 @@ class TestCgroupMonitor(unittest.TestCase):
         self.write_memory_limit()
 
         self.monitor.open()
-        self.monitor.wakeup()
+        self.monitor.wakeup(self.queue)
         self.monitor.close()
 
         # File shoud not have been touched
         with open(self.cg_path("memory.oom_control")) as f:
             self.assertEqual("oom_kill_disable 0\n", f.readline())
 
-    def test_is_valid(self):
+    def test_wakeup_stale(self):
         self.write_oom_control(oom_kill_disable="0")
 
         self.monitor.open()
-        self.assertTrue(self.monitor.is_valid())
 
         os.close(self.monitor.oom_control.fileno())
-        self.assertFalse(self.monitor.is_valid())
+        self.monitor.wakeup(self.queue)
+        self.assertRaises(EnvironmentError, self.monitor.wakeup, self.queue,
+                          raise_for_stale=True)
 
         # Close the other FD manually. We still need to attempt closing the
         # wrapper to avoid a resource warning.
         os.close(self.monitor.event_fileno())
         try:
             self.monitor.oom_control.close()
-        except OSError:
+        except EnvironmentError:
             pass
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -1,2 +1,0 @@
-linuxfd==1.0
-psutil==4.3.0
