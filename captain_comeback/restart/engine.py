@@ -16,6 +16,7 @@ class RestartEngine(object):
     def __init__(self, queue, grace_period):
         self.grace_period = grace_period
         self.queue = queue
+        self.counter = 0
         self._running_restarts = set()
 
     def _handle_restart_requested(self, cg):
@@ -25,7 +26,9 @@ class RestartEngine(object):
         logger.debug("%s: scheduling restart", cg.name())
         self._running_restarts.add(cg)
 
-        threading.Thread(target=restart, name="restart-job",
+        job_name = "restart-job-{0}".format(self.counter)
+        self.counter += 1
+        threading.Thread(target=restart, name=job_name,
                          args=(self.queue, self.grace_period, cg,)).start()
 
     def _handle_restart_complete(self, cg):
