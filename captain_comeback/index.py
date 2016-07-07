@@ -9,9 +9,9 @@ logger = logging.getLogger()
 
 
 class CgroupIndex(object):
-    def __init__(self, root_cg_path, epl, job_queue):
+    def __init__(self, root_cg_path, job_queue):
         self.root_cg_path = root_cg_path
-        self.epl = epl
+        self.epl = None
         self.job_queue = job_queue
         self._efd_hash = {}
         self._path_hash = {}
@@ -77,3 +77,17 @@ class CgroupIndex(object):
             cg = self._efd_hash[efd]
             cg.wakeup(self.job_queue)
             cg.event.read()
+
+    def open(self):
+        assert self.epl is None, "already open"
+        self.epl = select.epoll()
+        logger.info("ready to sync")
+
+    def close(self):
+        assert self.epl is not None, "already closed"
+
+        for cg in list(self._path_hash.values()):
+            self.remove(cg)
+
+        self.epl.close()
+        self.epl = None

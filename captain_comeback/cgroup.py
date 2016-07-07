@@ -69,7 +69,7 @@ class Cgroup(object):
         logger.debug("%s: wakeup", self.name())
 
         try:
-            oom_control_status = self._read_oom_control_status()
+            oom_control_status = self.oom_control_status()
         except EnvironmentError:
             logger.warning("%s: cgroup is stale", self.name())
             if raise_for_stale:
@@ -82,7 +82,7 @@ class Cgroup(object):
         if oom_control_status["under_oom"] == "1":
             self.on_oom_event(job_queue)
 
-    def _read_oom_control_status(self):
+    def oom_control_status(self):
         self.oom_control.seek(0)
         lines = self.oom_control.readlines()
         return dict([entry.strip().split(' ') for entry in lines])

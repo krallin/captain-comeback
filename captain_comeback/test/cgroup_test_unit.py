@@ -8,7 +8,7 @@ from six.moves import queue
 from captain_comeback.cgroup import Cgroup
 
 
-class TestCgroupMonitor(unittest.TestCase):
+class CgroupTestUnit(unittest.TestCase):
     def setUp(self):
         self.mock_cg = tempfile.mkdtemp()
         self.monitor = Cgroup(self.mock_cg)
