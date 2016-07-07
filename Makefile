@@ -25,4 +25,10 @@ clean-pyc:
 clean-tox:
 	rm -rf .tox/
 
-.PHONY: release dist install clean-tox clean-pyc clean-build
+test:
+	python setup.py test
+	integration/test.sh
+	integration/ignore.sh
+	integration/restart.sh
+
+.PHONY: release dist install clean-tox clean-pyc clean-build test
