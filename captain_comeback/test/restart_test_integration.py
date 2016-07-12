@@ -34,7 +34,13 @@ def random_free_port():
 class RestartTestIntegration(unittest.TestCase):
     def _launch_container(self, options):
         cmd = ["docker", "run", "-d"] + options
-        cid = subprocess.check_output(cmd).decode("utf-8").strip()
+        try:
+            cid = subprocess.check_output(cmd).decode("utf-8").strip()
+        except subprocess.CalledProcessError as e:
+            m = "{0} failed with status {1}: {2}".format(cmd,
+                                                         e.returncode,
+                                                         e.output)
+            self.fail(m)
         self._cids.append(cid)
         return Cgroup("/".join([CG_DOCKER_ROOT_DIR, cid]))
 
