@@ -1,0 +1,20 @@
+sudo: required
+dist: trusty
+addons:
+  apt:
+    packages:
+      - cgroup-bin
+services:
+  - docker
+language: python
+python:
+  - "2.7"
+  - "3.4"
+  - "3.5"
+install:
+  - sudo wget -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.9/gosu-$(dpkg --print-architecture)"
+  - sudo chmod +x /usr/local/bin/gosu
+  - sudo chmod ug+s /usr/local/bin/gosu
+  - gosu root make install
+script:
+  - gosu root make test
