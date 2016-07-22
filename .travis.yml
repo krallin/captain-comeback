@@ -21,5 +21,6 @@ install:
   - sudo chmod ug+s /usr/local/bin/gosu
   - gosu root .ci/install-docker.sh
   - gosu root make install
+  - gosu root pip install -r test_requirements.txt
 script:
   - gosu root make test
