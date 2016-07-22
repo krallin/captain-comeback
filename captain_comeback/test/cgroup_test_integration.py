@@ -12,18 +12,24 @@ from six.moves import queue
 from captain_comeback.index import CgroupIndex
 from captain_comeback.cgroup import Cgroup
 from captain_comeback.restart.messages import RestartRequestedMessage
+from captain_comeback.activity.messages import (NewCgroupMessage,
+                                                StaleCgroupMessage)
+from captain_comeback.activity.status import PROC_STATUSES_RAW
+
+from captain_comeback.test.queue_assertion_helper import (
+        QueueAssertionHelper)
 
 
 CG_PARENT_NAME = "captain-comeback-integration"
 CG_ROOT_DIR = "/sys/fs/cgroup/memory"
 
 
-def _descriptor_from_cg_path(path):
+def descriptor_from_cg_path(path):
     return "memory:{0}".format(path.replace(CG_ROOT_DIR, ""))
 
 
 def delete_cg(path, recursive=False):
-    command = ["sudo", "cgdelete", "-g", _descriptor_from_cg_path(path)]
+    command = ["sudo", "cgdelete", "-g", descriptor_from_cg_path(path)]
     if recursive:
         command.append("-r")
     subprocess.call(command)
@@ -38,7 +44,7 @@ def create_cg(name, parent_path=None):
     user_spec = "{0}:{1}".format(user_name, group_name)
 
     subprocess.check_call(["sudo", "cgcreate", "-g",
-                           _descriptor_from_cg_path(path),
+                           descriptor_from_cg_path(path),
                            "-t", user_spec, "-a", user_spec])
 
     return path
@@ -59,11 +65,11 @@ def enable_memlimit_and_trigger_oom(path):
 
     test_program = 'l = []\nwhile True:\n  l.append(object())'
 
-    subprocess.Popen(["sudo", "cgexec", "-g", _descriptor_from_cg_path(path),
+    subprocess.Popen(["sudo", "cgexec", "-g", descriptor_from_cg_path(path),
                       "python", "-c", test_program])
 
 
-class CgroupTestIntegration(unittest.TestCase):
+class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
     def setUp(self):
         self.parent_cg_path = create_cg(CG_PARENT_NAME)
 
@@ -87,7 +93,7 @@ class CgroupTestIntegration(unittest.TestCase):
         cg_path = create_random_cg(self.parent_cg_path)
 
         q = queue.Queue()
-        index = CgroupIndex(self.parent_cg_path, q)
+        index = CgroupIndex(self.parent_cg_path, q, q)
         index.open()
         index.sync()
 
@@ -106,7 +112,8 @@ class CgroupTestIntegration(unittest.TestCase):
     def test_index_sync_many(self):
         cg_paths = [create_random_cg(self.parent_cg_path) for _ in range(10)]
 
-        index = CgroupIndex(self.parent_cg_path, queue.Queue())
+        q = queue.Queue()
+        index = CgroupIndex(self.parent_cg_path, q, q)
         index.open()
         index.sync()
 
@@ -132,7 +139,8 @@ class CgroupTestIntegration(unittest.TestCase):
         cg.set_memory_limit_in_bytes(1024)
         self.assertEqual("0", cg.oom_control_status()["oom_kill_disable"])
 
-        index = CgroupIndex(self.parent_cg_path, queue.Queue())
+        q = queue.Queue()
+        index = CgroupIndex(self.parent_cg_path, q, q)
         index.open()
         index.sync()
         index.close()
@@ -143,19 +151,20 @@ class CgroupTestIntegration(unittest.TestCase):
     def test_index_poll(self):
         cg_path = create_random_cg(self.parent_cg_path)
 
-        q = queue.Queue()
-        index = CgroupIndex(self.parent_cg_path, q)
+        job_q = queue.Queue()
+        activity_q = queue.Queue()
+        index = CgroupIndex(self.parent_cg_path, job_q, activity_q)
         index.open()
+
+        self.assertHasNoMessages(activity_q)
         index.sync()
 
-        self.assertRaises(queue.Empty, q.get_nowait)
-
         enable_memlimit_and_trigger_oom(cg_path)
+        self.assertHasNoMessages(job_q)
         index.poll(10)
 
-        msg = q.get_nowait()
-        self.assertIsInstance(msg, RestartRequestedMessage)
-        self.assertEqual(cg_path, msg.cg.path)
+        self.assertHasMessageForCg(job_q, RestartRequestedMessage, cg_path)
+        self.assertHasMessageForCg(activity_q, NewCgroupMessage, cg_path)
 
         index.close()
 
@@ -164,19 +173,41 @@ class CgroupTestIntegration(unittest.TestCase):
             create_random_cg(self.parent_cg_path)
         cg_path = create_random_cg(self.parent_cg_path)
 
-        q = queue.Queue()
-        index = CgroupIndex(self.parent_cg_path, q)
+        job_q = queue.Queue()
+        activity_q = queue.Queue()
+        index = CgroupIndex(self.parent_cg_path, job_q, activity_q)
         index.open()
-        index.sync()
 
-        self.assertRaises(queue.Empty, q.get_nowait)
+        self.assertHasNoMessages(activity_q)
+        index.sync()
+        for _ in range(11):
+            self.assertHasMessageForCg(activity_q, NewCgroupMessage,
+                                       self.ANY_CG)
+        self.assertHasNoMessages(activity_q)
 
         enable_memlimit_and_trigger_oom(cg_path)
+        self.assertHasNoMessages(job_q)
         index.poll(10)
 
-        msg = q.get_nowait()
-        self.assertIsInstance(msg, RestartRequestedMessage)
-        self.assertEqual(cg_path, msg.cg.path)
+        self.assertHasMessageForCg(job_q, RestartRequestedMessage, cg_path)
+
+        index.close()
+
+    def test_index_poll_close(self):
+        cg_path = create_random_cg(self.parent_cg_path)
+
+        job_q = queue.Queue()
+        activity_q = queue.Queue()
+        index = CgroupIndex(self.parent_cg_path, job_q, activity_q)
+        index.open()
+
+        self.assertHasNoMessages(activity_q)
+        index.sync()
+        self.assertHasMessageForCg(activity_q, NewCgroupMessage, cg_path)
+
+        delete_cg(cg_path)
+        index.sync()
+        self.assertHasMessageForCg(activity_q, StaleCgroupMessage, cg_path)
 
         index.close()
 
@@ -250,7 +281,7 @@ class CgroupTestIntegration(unittest.TestCase):
         cg.open()
 
         cg.wakeup(q)
-        self.assertRaises(queue.Empty, q.get_nowait)
+        self.assertHasNoMessages(q)
 
         enable_memlimit_and_trigger_oom(cg_path)
 
@@ -269,3 +300,24 @@ class CgroupTestIntegration(unittest.TestCase):
             raise Exception("Queue never received a message!")
 
         cg.close()
+
+    def test_ps_table(self):
+        cg_path = create_random_cg(self.parent_cg_path)
+        subprocess.Popen(["sudo", "cgexec", "-g",
+                          descriptor_from_cg_path(cg_path),
+                          "sh", "-c", "sleep 10"])
+        time.sleep(2)  # Sleep for a little bit to let them spawn
+        cg = Cgroup(cg_path)
+        table = cg.ps_table()
+
+        self.assertEqual(2, len(table))
+        by_name = {proc["name"]: proc for proc in table}
+        self.assertEqual(["sh", "sleep"], sorted(by_name.keys()))
+
+        for name in ["sh", "sleep"]:
+            proc = by_name[name]
+            self.assertIsInstance(proc["pid"], int)
+            self.assertIsInstance(proc["memory_info"].vms, int)
+            self.assertIsInstance(proc["memory_info"].rss, int)
+            self.assertIsInstance(proc["cmdline"], list)
+            self.assertIn(proc["status"], PROC_STATUSES_RAW.keys())

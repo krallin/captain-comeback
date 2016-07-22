@@ -8,27 +8,36 @@ from six.moves import queue
 
 from captain_comeback.index import CgroupIndex
 from captain_comeback.restart.engine import RestartEngine
+from captain_comeback.activity.engine import ActivityEngine
 
 
 logger = logging.getLogger()
 
 
 DEFAULT_ROOT_CG = "/sys/fs/cgroup/memory/docker"
+DEFAULT_ACTIVITY_DIR = "/var/log/container-activity"
 DEFAULT_SYNC_TARGET_INTERVAL = 1
 DEFAULT_RESTART_GRACE_PERIOD = 10
 
 
-def main(root_cg_path, sync_target_interval, restart_grace_period):
+def main(root_cg_path, activity_path, sync_target_interval,
+         restart_grace_period):
     threading.current_thread().name = "index"
 
     job_queue = queue.Queue()
-    index = CgroupIndex(root_cg_path, job_queue)
+    activity_queue = queue.Queue()
+    index = CgroupIndex(root_cg_path, job_queue, activity_queue)
     index.open()
 
-    restarter = RestartEngine(job_queue, restart_grace_period)
+    restarter = RestartEngine(restart_grace_period, job_queue, activity_queue)
     restarter_thread = threading.Thread(target=restarter.run, name="restarter")
     restarter_thread.daemon = True
     restarter_thread.start()
+
+    activity = ActivityEngine(activity_path, activity_queue)
+    activity_thread = threading.Thread(target=activity.run, name="activity")
+    activity_thread.daemon = True
+    activity_thread.start()
 
     while True:
         index.sync()
@@ -47,6 +56,9 @@ def main_wrapper(args):
     parser.add_argument("--root-cg",
                         default=DEFAULT_ROOT_CG,
                         help="parent cgroup (children will be monitored)")
+    parser.add_argument("--activity",
+                        default=DEFAULT_ACTIVITY_DIR,
+                        help="where to log activity")
     parser.add_argument("--sync-interval",
                         default=DEFAULT_SYNC_TARGET_INTERVAL, type=float,
                         help="target sync interval to refresh cgroups")
@@ -75,7 +87,7 @@ def main_wrapper(args):
                        restart_grace_period)
         restart_grace_period = DEFAULT_RESTART_GRACE_PERIOD
 
-    main(ns.root_cg, sync_interval, restart_grace_period)
+    main(ns.root_cg, ns.activity, sync_interval, restart_grace_period)
 
 
 def cli_entrypoint():

@@ -9,6 +9,11 @@ from six.moves import queue
 
 from captain_comeback.restart.engine import restart
 from captain_comeback.cgroup import Cgroup
+from captain_comeback.restart.messages import RestartCompleteMessage
+from captain_comeback.activity.messages import RestartCgroupMessage
+
+from captain_comeback.test.queue_assertion_helper import (
+        QueueAssertionHelper)
 
 
 CG_DOCKER_ROOT_DIR = "/sys/fs/cgroup/memory/docker/"
@@ -31,16 +36,19 @@ def random_free_port():
     return port
 
 
-class RestartTestIntegration(unittest.TestCase):
+class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
     def _launch_container(self, options):
         cmd = ["docker", "run", "-d"] + options
-        try:
-            cid = subprocess.check_output(cmd).decode("utf-8").strip()
-        except subprocess.CalledProcessError as e:
-            m = "{0} failed with status {1}: {2}".format(cmd,
-                                                         e.returncode,
-                                                         e.output)
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE)
+
+        out, err = p.communicate()
+        if p.returncode:
+            m = "{0} failed with status {1}:\n{2}\n{3}".format(cmd,
+                                                               p.returncode,
+                                                               out, err)
             self.fail(m)
+        cid = out.decode("utf-8").strip()
         self._cids.append(cid)
         return Cgroup("/".join([CG_DOCKER_ROOT_DIR, cid]))
 
@@ -51,13 +59,23 @@ class RestartTestIntegration(unittest.TestCase):
         for cid in self._cids:
             subprocess.check_output(["docker", "rm", "-f", cid])
 
+    def test_notifies_queues(self):
+        cg = self._launch_container(WELL_BEHAVED)
+        job_q = queue.Queue()
+        activity_q = queue.Queue()
+        restart(10, cg, job_q, activity_q)
+
+        self.assertHasMessageForCg(job_q, RestartCompleteMessage, cg.path)
+        self.assertHasMessageForCg(activity_q, RestartCgroupMessage, cg.path)
+
     def test_restarts_well_behaved_container(self):
         cg = self._launch_container(WELL_BEHAVED)
 
         pid_before = docker_json(cg)["State"]["Pid"]
         time_before = time.time()
 
-        restart(queue.Queue(), 10, cg)
+        q = queue.Queue()
+        restart(10, cg, q, q)
 
         time_after = time.time()
         pid_after = docker_json(cg)["State"]["Pid"]
@@ -71,7 +89,8 @@ class RestartTestIntegration(unittest.TestCase):
         pid_before = docker_json(cg)["State"]["Pid"]
         time_before = time.time()
 
-        restart(queue.Queue(), 3, cg)
+        q = queue.Queue()
+        restart(3, cg, q, q)
 
         time_after = time.time()
         pid_after = docker_json(cg)["State"]["Pid"]
@@ -84,7 +103,8 @@ class RestartTestIntegration(unittest.TestCase):
 
         options = ["-p", "{0}:80".format(host_port)] + WELL_BEHAVED
         cg = self._launch_container(options)
-        restart(queue.Queue(), 10, cg)
+        q = queue.Queue()
+        restart(10, cg, q, q)
 
         binding = docker_json(cg)["NetworkSettings"]["Ports"]["80/tcp"][0]
         port = int(binding["HostPort"])
@@ -95,4 +115,5 @@ class RestartTestIntegration(unittest.TestCase):
     def test_restart_with_memory_limit(self):
         options = ["--memory", "10mb"] + WELL_BEHAVED
         cg = self._launch_container(options)
-        restart(queue.Queue(), 10, cg)
+        q = queue.Queue()
+        restart(10, cg, q, q)
