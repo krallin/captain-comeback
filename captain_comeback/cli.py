@@ -49,6 +49,13 @@ def main(root_cg_path, activity_path, sync_target_interval,
             logger.debug("poll with timeout: %s", poll_timeout)
             index.poll(poll_timeout)
 
+        for thread in [activity_thread, restarter_thread]:
+            if not thread.is_alive():
+                logger.critical("thread %s is dead", thread.name)
+                return 1
+
+    return 0
+
 
 def main_wrapper(args):
     desc = "Autorestart containers that exceed their memory allocation"
@@ -87,11 +94,11 @@ def main_wrapper(args):
                        restart_grace_period)
         restart_grace_period = DEFAULT_RESTART_GRACE_PERIOD
 
-    main(ns.root_cg, ns.activity, sync_interval, restart_grace_period)
+    return main(ns.root_cg, ns.activity, sync_interval, restart_grace_period)
 
 
 def cli_entrypoint():
-    main_wrapper(sys.argv[1:])
+    sys.exit(main_wrapper(sys.argv[1:]))
 
 
 if __name__ == "__main__":
