@@ -32,11 +32,23 @@ def main(root_cg_path, activity_path, sync_target_interval,
     restarter = RestartEngine(restart_grace_period, job_queue, activity_queue)
     restarter_thread = threading.Thread(target=restarter.run, name="restarter")
     restarter_thread.daemon = True
-    restarter_thread.start()
 
     activity = ActivityEngine(activity_path, activity_queue)
     activity_thread = threading.Thread(target=activity.run, name="activity")
     activity_thread.daemon = True
+
+    # Now, fire an initial sync, then empty the activity queue (we don't want
+    # to fire notifications for "new" containers if Captain Comeback is the one
+    # that's starting), and start all worker threads.
+    index.sync()
+
+    while True:
+        try:
+            activity_queue.get_nowait()
+        except queue.Empty:
+            break
+
+    restarter_thread.start()
     activity_thread.start()
 
     while True:
