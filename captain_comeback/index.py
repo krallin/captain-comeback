@@ -4,25 +4,32 @@ import logging
 import select
 
 from captain_comeback.cgroup import Cgroup
+from captain_comeback.activity.messages import (NewCgroupMessage,
+                                                StaleCgroupMessage)
 
 logger = logging.getLogger()
 
 
 class CgroupIndex(object):
-    def __init__(self, root_cg_path, job_queue):
+    def __init__(self, root_cg_path, job_queue, activity_queue):
         self.root_cg_path = root_cg_path
-        self.epl = None
         self.job_queue = job_queue
+        self.activity_queue = activity_queue
+        self.epl = None
         self._efd_hash = {}
         self._path_hash = {}
 
     def register(self, cg):
+        logger.info("%s: registering", cg.name())
         cg.open()
         self._efd_hash[cg.event_fileno()] = cg
         self._path_hash[cg.path] = cg
         self.epl.register(cg.event_fileno(), select.EPOLLIN)
+        self.activity_queue.put(NewCgroupMessage(cg))
 
     def remove(self, cg):
+        logger.info("%s: deregistering", cg.name())
+        self.activity_queue.put(StaleCgroupMessage(cg))
         self.epl.unregister(cg.event_fileno())
         self._path_hash.pop(cg.path)
         self._efd_hash.pop(cg.event_fileno())
@@ -39,7 +46,6 @@ class CgroupIndex(object):
             try:
                 cg.wakeup(self.job_queue, raise_for_stale=True)
             except EnvironmentError:
-                logger.info("%s: deregistering", cg.name())
                 self.remove(cg)
 
         for entry in os.listdir(self.root_cg_path):
@@ -55,15 +61,12 @@ class CgroupIndex(object):
             if path in self._path_hash:
                 continue
 
-            # This a new CG, register it.
+            # This a new CG, Register and wake it up immediately after, in case
+            # there already is some handling to do (typically: disabling the
+            # OOM killer). To avoid race conditions, we do this after
+            # registration to ensure we can deregister immediately if the
+            # cgroup just exited.
             cg = Cgroup(path)
-            logger.info("%s: new cgroup", cg.name())
-
-            # Register and wake up the CG immediately after, in case there
-            # already is some handling to do (typically: disabling the OOM
-            # killer). To avoid race conditions, we do this after registration
-            # to ensure we can deregister immediately if the cgroup just
-            # exited.
             self.register(cg)
             cg.wakeup(self.job_queue)
 

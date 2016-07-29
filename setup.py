@@ -11,7 +11,13 @@ with open(os.path.join(HERE, 'README.md')) as readme_file:
 with open(os.path.join(HERE, 'CHANGELOG.md')) as history_file:
     changelog = history_file.read()
 
-requirements = ["linuxfd>=1.0,<2", "psutil>=4.3,<5", "six>=1.0,<2"]
+requirements = [
+    "linuxfd>=1.0,<2",
+    "psutil>=4.3,<5",
+    "six>=1.0,<2",
+    "tabulate>=0.7.5,<1"
+]
+
 test_requirements = []
 
 setup(
@@ -25,6 +31,7 @@ setup(
     packages=[
         'captain_comeback',
         'captain_comeback.restart',
+        'captain_comeback.activity',
         'captain_comeback.test'
     ],
     include_package_data=True,

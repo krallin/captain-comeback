@@ -26,7 +26,7 @@ clean-tox:
 	rm -rf .tox/
 
 test:
-	python setup.py test
+	python setup.py nosetests
 	integration/test.sh
 	integration/ignore.sh
 	integration/restart.sh

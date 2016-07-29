@@ -8,27 +8,48 @@ from six.moves import queue
 
 from captain_comeback.index import CgroupIndex
 from captain_comeback.restart.engine import RestartEngine
+from captain_comeback.activity.engine import ActivityEngine
 
 
 logger = logging.getLogger()
 
 
 DEFAULT_ROOT_CG = "/sys/fs/cgroup/memory/docker"
+DEFAULT_ACTIVITY_DIR = "/var/log/container-activity"
 DEFAULT_SYNC_TARGET_INTERVAL = 1
 DEFAULT_RESTART_GRACE_PERIOD = 10
 
 
-def main(root_cg_path, sync_target_interval, restart_grace_period):
+def main(root_cg_path, activity_path, sync_target_interval,
+         restart_grace_period):
     threading.current_thread().name = "index"
 
     job_queue = queue.Queue()
-    index = CgroupIndex(root_cg_path, job_queue)
+    activity_queue = queue.Queue()
+    index = CgroupIndex(root_cg_path, job_queue, activity_queue)
     index.open()
 
-    restarter = RestartEngine(job_queue, restart_grace_period)
+    restarter = RestartEngine(restart_grace_period, job_queue, activity_queue)
     restarter_thread = threading.Thread(target=restarter.run, name="restarter")
     restarter_thread.daemon = True
+
+    activity = ActivityEngine(activity_path, activity_queue)
+    activity_thread = threading.Thread(target=activity.run, name="activity")
+    activity_thread.daemon = True
+
+    # Now, fire an initial sync, then empty the activity queue (we don't want
+    # to fire notifications for "new" containers if Captain Comeback is the one
+    # that's starting), and start all worker threads.
+    index.sync()
+
+    while True:
+        try:
+            activity_queue.get_nowait()
+        except queue.Empty:
+            break
+
     restarter_thread.start()
+    activity_thread.start()
 
     while True:
         index.sync()
@@ -40,6 +61,13 @@ def main(root_cg_path, sync_target_interval, restart_grace_period):
             logger.debug("poll with timeout: %s", poll_timeout)
             index.poll(poll_timeout)
 
+        for thread in [activity_thread, restarter_thread]:
+            if not thread.is_alive():
+                logger.critical("thread %s is dead", thread.name)
+                return 1
+
+    return 0
+
 
 def main_wrapper(args):
     desc = "Autorestart containers that exceed their memory allocation"
@@ -47,6 +75,9 @@ def main_wrapper(args):
     parser.add_argument("--root-cg",
                         default=DEFAULT_ROOT_CG,
                         help="parent cgroup (children will be monitored)")
+    parser.add_argument("--activity",
+                        default=DEFAULT_ACTIVITY_DIR,
+                        help="where to log activity")
     parser.add_argument("--sync-interval",
                         default=DEFAULT_SYNC_TARGET_INTERVAL, type=float,
                         help="target sync interval to refresh cgroups")
@@ -75,11 +106,11 @@ def main_wrapper(args):
                        restart_grace_period)
         restart_grace_period = DEFAULT_RESTART_GRACE_PERIOD
 
-    main(ns.root_cg, sync_interval, restart_grace_period)
+    return main(ns.root_cg, ns.activity, sync_interval, restart_grace_period)
 
 
 def cli_entrypoint():
-    main_wrapper(sys.argv[1:])
+    sys.exit(main_wrapper(sys.argv[1:]))
 
 
 if __name__ == "__main__":

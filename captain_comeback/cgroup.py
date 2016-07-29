@@ -1,7 +1,9 @@
 # coding:utf-8
 import os
 import logging
+
 import linuxfd
+import psutil
 
 from captain_comeback.restart.messages import RestartRequestedMessage
 
@@ -99,6 +101,19 @@ class Cgroup(object):
     def pids(self):
         with open(self._tasks_file_path()) as f:
             return [int(t) for t in f.readlines()]
+
+    def ps_table(self):
+        # Take a snapshot of the processes in this cgroup, which will be usable
+        # after the cgroup exits.
+        out = []
+        for pid in self.pids():
+            try:
+                proc = psutil.Process(pid)
+                out.append(proc.as_dict(ad_value=''))
+            except psutil.NoSuchProcess:
+                # Process has already exited
+                pass
+        return out
 
     def _oom_control_file_path(self):
         return os.path.join(self.path, "memory.oom_control")

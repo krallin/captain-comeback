@@ -62,6 +62,9 @@ terminate_captain() {
   fi
   kill -TERM "$CAPTAIN_PID"
   CAPTAIN_TERMINATED=1
+
+  rm -rf "$CAPTAIN_ACTIVITY_DIR"
+  unset CAPTAIN_ACTIVITY_DIR
 }
 
 terminate_captain_at_exit() {
@@ -69,7 +72,8 @@ terminate_captain_at_exit() {
 }
 
 run_captain_bg() {
-  captain-comeback "$@" &
+  CAPTAIN_ACTIVITY_DIR="$(mktemp -d)"
+  captain-comeback "$@" --activity "$CAPTAIN_ACTIVITY_DIR" &
   CAPTAIN_PID="$!"
   CAPTAIN_TERMINATED=0
   terminate_captain_at_exit
