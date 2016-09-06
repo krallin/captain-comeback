@@ -1,4 +1,6 @@
 # coding:utf-8
+import os
+import signal
 import logging
 import threading
 import subprocess
@@ -59,6 +61,20 @@ def restart(grace_period, cg, job_queue, activity_queue):
     # We initiate the restart first. This increases our chances of getting a
     # successful restart by signalling a potential memory hog before we
     # allocate extra memory.
+
+    # Our restart is two steps:
+    # - First, we'll signal everyone in the cgroup to exit
+    # - Second, we'll ask Docker to restart the container.
+    # It's possible that between the two steps, the container will have
+    # exited already, but Docker will do the right thing and restart our
+    # process in this case.
+    for pid in cg.pids():
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            # That process exited already. Who cares? We don't.
+            logger.debug("%s: %s had already exited", cg.name(), pid)
+
     restart_cmd = ["docker", "restart", "-t", str(grace_period), cg.name()]
     proc = subprocess.Popen(restart_cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)

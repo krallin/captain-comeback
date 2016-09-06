@@ -18,8 +18,9 @@ from captain_comeback.test.queue_assertion_helper import (
 
 CG_DOCKER_ROOT_DIR = "/sys/fs/cgroup/memory/docker/"
 
-WELL_BEHAVED = ["krallin/ubuntu-tini", "sleep", "100"]
-MIS_BEHAVED = ["ubuntu", "sleep", "100"]  # No default sighanders as PID 1
+EXITS_WITH_TERM_1 = ["krallin/ubuntu-tini", "sleep", "100"]
+EXITS_WITH_TERM_ALL = ["ubuntu", "sh", "-c", "sleep 100"]
+NEVER_EXITS = ["ubuntu", "sleep", "100"]  # No default sighanders as PID 1
 
 
 def docker_json(cg):
@@ -60,7 +61,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
             subprocess.check_output(["docker", "rm", "-f", cid])
 
     def test_notifies_queues(self):
-        cg = self._launch_container(WELL_BEHAVED)
+        cg = self._launch_container(EXITS_WITH_TERM_1)
         job_q = queue.Queue()
         activity_q = queue.Queue()
         restart(10, cg, job_q, activity_q)
@@ -68,8 +69,23 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         self.assertHasMessageForCg(job_q, RestartCompleteMessage, cg.path)
         self.assertHasMessageForCg(activity_q, RestartCgroupMessage, cg.path)
 
-    def test_restarts_well_behaved_container(self):
-        cg = self._launch_container(WELL_BEHAVED)
+    def test_restart_container_with_term_1(self):
+        cg = self._launch_container(EXITS_WITH_TERM_1)
+
+        pid_before = docker_json(cg)["State"]["Pid"]
+        time_before = time.time()
+
+        q = queue.Queue()
+        restart(10, cg, q, q)
+
+        time_after = time.time()
+        pid_after = docker_json(cg)["State"]["Pid"]
+
+        self.assertNotEqual(pid_before, pid_after)
+        self.assertLess(time_after - time_before, 5)
+
+    def test_restart_container_with_term_all(self):
+        cg = self._launch_container(EXITS_WITH_TERM_ALL)
 
         pid_before = docker_json(cg)["State"]["Pid"]
         time_before = time.time()
@@ -84,7 +100,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         self.assertLess(time_after - time_before, 5)
 
     def test_restarts_misbehaved_container(self):
-        cg = self._launch_container(MIS_BEHAVED)
+        cg = self._launch_container(NEVER_EXITS)
 
         pid_before = docker_json(cg)["State"]["Pid"]
         time_before = time.time()
@@ -101,7 +117,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
     def test_restarts_with_ports(self):
         host_port = random_free_port()
 
-        options = ["-p", "{0}:80".format(host_port)] + WELL_BEHAVED
+        options = ["-p", "{0}:80".format(host_port)] + EXITS_WITH_TERM_1
         cg = self._launch_container(options)
         q = queue.Queue()
         restart(10, cg, q, q)
@@ -113,7 +129,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
 
     @unittest.skipUnless(os.geteuid() == 0, "requires root")
     def test_restart_with_memory_limit(self):
-        options = ["--memory", "10mb"] + WELL_BEHAVED
+        options = ["--memory", "10mb"] + EXITS_WITH_TERM_1
         cg = self._launch_container(options)
         q = queue.Queue()
         restart(10, cg, q, q)
