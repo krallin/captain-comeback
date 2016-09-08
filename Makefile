@@ -30,5 +30,6 @@ test:
 	integration/test.sh
 	integration/ignore.sh
 	integration/restart.sh
+	integration/docker-term-all.sh
 
 .PHONY: release dist install clean-tox clean-pyc clean-build test

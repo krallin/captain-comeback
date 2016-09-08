@@ -27,6 +27,8 @@ want_hog() {
 
 
 _run_hog_internal() {
+  docker rm "$HOG_CONTAINER_NAME" >/dev/null 2>&1 || true
+
   local opts=("--memory" "$HOG_MEMORY_LIMIT"
         "--name" "$HOG_CONTAINER_NAME"
         "-v" "$(pwd):/hog"
@@ -40,7 +42,7 @@ _run_hog_internal() {
 }
 
 run_hog_fg() {
-  _run_hog_internal "--rm"
+  _run_hog_internal
 }
 
 run_hog_bg() {
@@ -77,4 +79,15 @@ run_captain_bg() {
   CAPTAIN_PID="$!"
   CAPTAIN_TERMINATED=0
   terminate_captain_at_exit
+}
+
+wait_for() {
+  for i in $(seq 0 50); do
+    if "$@" ; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  return 1
 }
