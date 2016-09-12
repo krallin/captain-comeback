@@ -5,6 +5,7 @@ import logging
 import threading
 import subprocess
 import time
+import errno
 
 import psutil
 
@@ -75,9 +76,13 @@ def restart(grace_period, cg, job_queue, activity_queue):
     for pid in cg.pids():
         try:
             os.kill(pid, signal.SIGTERM)
-        except OSError:
-            # That process exited already. Who cares? We don't.
-            logger.debug("%s: %s had already exited", cg.name(), pid)
+        except OSError as e:
+            if e.errno == errno.ESRCH:
+                # That process exited already. Who cares? We don't.
+                logger.debug("%s: %s had already exited", cg.name(), pid)
+            else:
+                logger.error("%s: failed to deliver SIGTERM to %s: %s",
+                             cg.name(), pid, e)
 
     signaled_at = time.time()
 

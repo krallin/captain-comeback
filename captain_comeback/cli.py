@@ -4,10 +4,12 @@ import logging
 import argparse
 import threading
 import time
+import os
 from six.moves import queue
 
 from captain_comeback.index import CgroupIndex
-from captain_comeback.restart.engine import RestartEngine
+from captain_comeback.cgroup import Cgroup
+from captain_comeback.restart.engine import RestartEngine, restart
 from captain_comeback.activity.engine import ActivityEngine
 
 
@@ -20,8 +22,8 @@ DEFAULT_SYNC_TARGET_INTERVAL = 1
 DEFAULT_RESTART_GRACE_PERIOD = 10
 
 
-def main(root_cg_path, activity_path, sync_target_interval,
-         restart_grace_period):
+def run_loop(root_cg_path, activity_path, sync_target_interval,
+             restart_grace_period):
     threading.current_thread().name = "index"
 
     job_queue = queue.Queue()
@@ -69,6 +71,18 @@ def main(root_cg_path, activity_path, sync_target_interval,
     return 0
 
 
+def restart_one(root_cg, grace_period, container_id):
+    q = queue.Queue()
+    cg = Cgroup(os.path.join(root_cg, container_id))
+    restart(grace_period, cg, q, q)
+
+    while not q.empty():
+        m = q.get()
+        logger.debug("%s: received %s", cg.name(), m.__class__.__name__)
+
+    return 0
+
+
 def main_wrapper(args):
     desc = "Autorestart containers that exceed their memory allocation"
     parser = argparse.ArgumentParser(description=desc)
@@ -84,8 +98,10 @@ def main_wrapper(args):
     parser.add_argument("--restart-grace-period",
                         default=DEFAULT_RESTART_GRACE_PERIOD, type=int,
                         help="how long to wait before sending SIGKILL")
-    parser.add_argument("--debug", default=False, action='store_true',
+    parser.add_argument("--debug", default=False, action="store_true",
                         help="enable debug logging")
+    parser.add_argument("--restart", dest="container_id",
+                        help="restart one container and exit")
 
     ns = parser.parse_args(args)
 
@@ -106,7 +122,14 @@ def main_wrapper(args):
                        restart_grace_period)
         restart_grace_period = DEFAULT_RESTART_GRACE_PERIOD
 
-    return main(ns.root_cg, ns.activity, sync_interval, restart_grace_period)
+    # If the --restart argument is present, just restart one container and
+    # exit.
+    if ns.container_id:
+        return restart_one(ns.root_cg, restart_grace_period, ns.container_id)
+
+    # Otherwise the --restart argument was not there, start the main loop.
+    return run_loop(ns.root_cg, ns.activity, sync_interval,
+                    restart_grace_period)
 
 
 def cli_entrypoint():
