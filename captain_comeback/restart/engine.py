@@ -120,6 +120,10 @@ def restart(grace_period, cg, job_queue, activity_queue):
             else:
                 logger.debug("%s: Waiting for processes to exit: %s...",
                              cg.name(), ", ".join(str(p) for p in pids))
+        else:
+            logger.warning(
+                "%s: container did not exit within %s seconds grace period",
+                cg.name(), grace_period)
     except EnvironmentError:
         # This could happen if e.g. attempting to write to the memory limit
         # file after the cgroup has exited.
