@@ -10,7 +10,8 @@ from six.moves import queue
 from captain_comeback.restart.engine import restart
 from captain_comeback.cgroup import Cgroup
 from captain_comeback.restart.messages import RestartCompleteMessage
-from captain_comeback.activity.messages import RestartCgroupMessage
+from captain_comeback.activity.messages import (RestartCgroupMessage,
+                                                RestartTimeoutMessage)
 
 from captain_comeback.test.queue_assertion_helper import (
         QueueAssertionHelper)
@@ -68,6 +69,18 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
 
         self.assertHasMessageForCg(job_q, RestartCompleteMessage, cg.path)
         self.assertHasMessageForCg(activity_q, RestartCgroupMessage, cg.path)
+        self.assertHasNoMessages(activity_q)
+
+    def test_notifies_queues_timeout(self):
+        cg = self._launch_container(NEVER_EXITS)
+        job_q = queue.Queue()
+        activity_q = queue.Queue()
+        restart(3, cg, job_q, activity_q)
+
+        self.assertHasMessageForCg(job_q, RestartCompleteMessage, cg.path)
+        self.assertHasMessageForCg(activity_q, RestartCgroupMessage, cg.path)
+        self.assertHasMessageForCg(activity_q, RestartTimeoutMessage, cg.path,
+                                   grace_period=3)
 
     def test_restart_container_with_term_1(self):
         cg = self._launch_container(EXITS_WITH_TERM_1)

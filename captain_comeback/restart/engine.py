@@ -11,7 +11,8 @@ import psutil
 
 from captain_comeback.restart.messages import (RestartRequestedMessage,
                                                RestartCompleteMessage)
-from captain_comeback.activity.messages import RestartCgroupMessage
+from captain_comeback.activity.messages import (RestartCgroupMessage,
+                                                RestartTimeoutMessage)
 
 
 logger = logging.getLogger()
@@ -124,6 +125,7 @@ def restart(grace_period, cg, job_queue, activity_queue):
             logger.warning(
                 "%s: container did not exit within %s seconds grace period",
                 cg.name(), grace_period)
+            activity_queue.put(RestartTimeoutMessage(cg, grace_period))
     except EnvironmentError:
         # This could happen if e.g. attempting to write to the memory limit
         # file after the cgroup has exited.

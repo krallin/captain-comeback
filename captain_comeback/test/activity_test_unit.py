@@ -14,6 +14,7 @@ from captain_comeback.activity.engine import ActivityEngine
 from captain_comeback.activity.messages import (NewCgroupMessage,
                                                 StaleCgroupMessage,
                                                 RestartCgroupMessage,
+                                                RestartTimeoutMessage,
                                                 ExitMessage)
 
 
@@ -74,6 +75,14 @@ class ActivityTestUnit(unittest.TestCase):
             "container is restarting:",
             re.compile(r"123\s+16\s+8\s+T\s+some proc"),
             re.compile(r'456\s+4\s+2\s+R\s+sh -c "a && b"')
+        ])
+
+    def test_restart_timeout(self):
+        self.q.put(RestartTimeoutMessage(Cgroup("/some/foo"), 3))
+        self.q.put(ExitMessage())
+        self.engine.run()
+        self.assertHasLogged("foo", [
+            "container did not exit within 3 seconds grace period"
         ])
 
     def assertHasLogged(self, cg_name, messages):

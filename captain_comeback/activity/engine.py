@@ -10,6 +10,7 @@ from tabulate import tabulate
 from captain_comeback.activity.messages import (NewCgroupMessage,
                                                 StaleCgroupMessage,
                                                 RestartCgroupMessage,
+                                                RestartTimeoutMessage,
                                                 ExitMessage)
 from captain_comeback.activity.status import PROC_STATUSES_RAW
 
@@ -63,6 +64,10 @@ class ActivityEngine(object):
 
                 for bit in bits:
                     self._log_activity(msg.cg.name(), bit)
+            elif isinstance(msg, RestartTimeoutMessage):
+                m = "container did not exit within {0} seconds grace " \
+                    "period".format(msg.grace_period)
+                self._log_activity(msg.cg.name(), m)
             elif isinstance(msg, ExitMessage):
                 logger.warning("shutting down")
                 break
