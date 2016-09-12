@@ -74,11 +74,16 @@ def run_loop(root_cg_path, activity_path, sync_target_interval,
 def restart_one(root_cg, grace_period, container_id):
     q = queue.Queue()
     cg = Cgroup(os.path.join(root_cg, container_id))
-    restart(grace_period, cg, q, q)
 
-    while not q.empty():
-        m = q.get()
-        logger.debug("%s: received %s", cg.name(), m.__class__.__name__)
+    try:
+        restart(grace_period, cg, q, q)
+    except IOError:
+        logger.error("%s: container does not exist", cg.name())
+        return 1
+    finally:
+        while not q.empty():
+            m = q.get()
+            logger.debug("%s: received %s", cg.name(), m.__class__.__name__)
 
     return 0
 
