@@ -19,5 +19,11 @@ class RestartCgroupMessage(object):
         self.ps_table = ps_table
 
 
+class RestartTimeoutMessage(object):
+    def __init__(self, cg, grace_period):
+        self.cg = cg
+        self.grace_period = grace_period
+
+
 class ExitMessage(object):
     pass
