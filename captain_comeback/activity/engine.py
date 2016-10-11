@@ -46,6 +46,7 @@ class ActivityEngine(object):
                 table_data = [
                     [
                         pinfo["pid"],
+                        pinfo["ppid"],
                         pinfo["memory_info"].vms / KB,
                         pinfo["memory_info"].rss / KB,
                         PROC_STATUSES_RAW.get(pinfo['status']) or "?",
@@ -58,7 +59,7 @@ class ActivityEngine(object):
                     "container exceeded its memory allocation",
                     "container is restarting:",
                     tabulate(table_data, headers=[
-                        "PID", "VSZ", "RSS", "STAT", "COMMAND"
+                        "PID", "PPID", "VSZ", "RSS", "STAT", "COMMAND"
                     ], tablefmt="plain")
                 ]
 
