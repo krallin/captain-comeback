@@ -59,6 +59,17 @@ class RestartEngine(object):
 
 
 def restart(grace_period, cg, job_queue, activity_queue):
+    try:
+        do_restart(grace_period, cg, job_queue, activity_queue)
+    except:
+        logger.exception("%s: restart failed", cg.name())
+        raise
+    finally:
+        logger.info("%s: restart complete", cg.name())
+        job_queue.put(RestartCompleteMessage(cg))
+
+
+def do_restart(grace_period, cg, job_queue, activity_queue):
     # Snapshot task usage
     logger.info("%s: restarting", cg.name())
 
@@ -99,8 +110,8 @@ def restart(grace_period, cg, job_queue, activity_queue):
         free_memory = psutil.virtual_memory().free
         extra = int(memory_limit / 10)  # Make parameterizable
 
-        logger.debug("%s: memory_limit: %s, free_memory: %s, extra: %s",
-                     cg.name(), memory_limit, free_memory, extra)
+        logger.info("%s: memory_limit: %s, free_memory: %s, extra: %s",
+                    cg.name(), memory_limit, free_memory, extra)
         if free_memory > extra:
             new_limit = memory_limit + extra
             logger.info("%s: increasing memory limit to %s", cg.name(),
@@ -116,11 +127,11 @@ def restart(grace_period, cg, job_queue, activity_queue):
                 pids = cg.pids()
             except EnvironmentError:
                 # The cgroup is gone!
-                logger.debug("%s: cgroup has exited after SIGTERM ", cg.name())
+                logger.info("%s: cgroup has exited after SIGTERM ", cg.name())
                 break
             else:
-                logger.debug("%s: Waiting for processes to exit: %s...",
-                             cg.name(), ", ".join(str(p) for p in pids))
+                logger.info("%s: Waiting for processes to exit: %s...",
+                            cg.name(), ", ".join(str(p) for p in pids))
         else:
             logger.warning(
                 "%s: container did not exit within %s seconds grace period",
@@ -130,18 +141,15 @@ def restart(grace_period, cg, job_queue, activity_queue):
         # This could happen if e.g. attempting to write to the memory limit
         # file after the cgroup has exited.
         pass
-    finally:
-        restart_cmd = ["docker", "restart", "-t", "0", cg.name()]
-        proc = subprocess.Popen(restart_cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE)
 
-        out, err = proc.communicate()
-        ret = proc.poll()
-        if ret != 0:
-            logger.error("%s: failed to restart", cg.name())
-            logger.error("%s: status: %s", cg.name(), ret)
-            logger.error("%s: stdout: %s", cg.name(), out)
-            logger.error("%s: stderr: %s", cg.name(), err)
+    restart_cmd = ["docker", "restart", "-t", "0", cg.name()]
+    proc = subprocess.Popen(restart_cmd, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
 
-        logger.info("%s: restart complete", cg.name())
-        job_queue.put(RestartCompleteMessage(cg))
+    out, err = proc.communicate()
+    ret = proc.poll()
+    if ret != 0:
+        logger.error("%s: failed to restart", cg.name())
+        logger.error("%s: status: %s", cg.name(), ret)
+        logger.error("%s: stdout: %s", cg.name(), out)
+        logger.error("%s: stderr: %s", cg.name(), err)
