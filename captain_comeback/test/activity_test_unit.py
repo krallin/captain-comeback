@@ -56,12 +56,14 @@ class ActivityTestUnit(unittest.TestCase):
         ps_table = [
             {
                 "pid": 123,
+                "ppid": 0,
                 "memory_info": MemInfo(rss=1024*8, vms=1024*16),
                 "cmdline": ["some", "proc"],
                 "status": psutil.STATUS_STOPPED,
             },
             {
                 "pid": 456,
+                "ppid": 123,
                 "memory_info": MemInfo(rss=1024*2, vms=1024*4),
                 "cmdline": ["sh", "-c", "a && b"],
                 "status": psutil.STATUS_RUNNING,
@@ -73,8 +75,8 @@ class ActivityTestUnit(unittest.TestCase):
         self.assertHasLogged("foo", [
             "container exceeded its memory allocation",
             "container is restarting:",
-            re.compile(r"123\s+16\s+8\s+T\s+some proc"),
-            re.compile(r'456\s+4\s+2\s+R\s+sh -c "a && b"')
+            re.compile(r"123\s+0\s+16\s+8\s+T\s+some proc"),
+            re.compile(r'456\s+123\s+4\s+2\s+R\s+sh -c "a && b"')
         ])
 
     def test_restart_timeout(self):
