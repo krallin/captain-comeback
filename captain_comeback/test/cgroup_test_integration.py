@@ -77,15 +77,15 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
         # Kill every task in subgroups to be safe, then recursively tear down
         # everything.
         try:
-            list_pids_cmd = "cat {0}/*/tasks".format(self.parent_cg_path)
-            tasks = subprocess.check_output(list_pids_cmd, shell=True,
-                                            stderr=subprocess.PIPE).split()
+            pids_cmd = "cat {0}/*/cgroup.procs".format(self.parent_cg_path)
+            pids = subprocess.check_output(pids_cmd, shell=True,
+                                           stderr=subprocess.PIPE).split()
         except subprocess.CalledProcessError:
-            # No tasks
+            # No pids
             pass
         else:
-            for task in tasks:
-                subprocess.check_call(["sudo", "kill", "-KILL", task])
+            for pid in pids:
+                subprocess.check_call(["sudo", "kill", "-KILL", pid])
 
         delete_cg(self.parent_cg_path, recursive=True)
 
@@ -303,16 +303,27 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
 
     def test_ps_table(self):
         cg_path = create_random_cg(self.parent_cg_path)
+        multithead_sleep = "\n".join([
+            'import time, threading',
+            't = threading.Thread(target=time.sleep, args=(10,))',
+            't.start()',
+            't.join()'
+        ])
         subprocess.Popen(["sudo", "cgexec", "-g",
                           descriptor_from_cg_path(cg_path),
                           "sh", "-c", "sleep 10"])
+        subprocess.Popen(["sudo", "cgexec", "-g",
+                          descriptor_from_cg_path(cg_path),
+                          "python", "-c", multithead_sleep])
+
         time.sleep(2)  # Sleep for a little bit to let them spawn
         cg = Cgroup(cg_path)
         table = cg.ps_table()
 
-        self.assertEqual(2, len(table))
+        # We should see 3 processes (but there are 4 threads here)
+        self.assertEqual(3, len(table))
         by_name = {proc["name"]: proc for proc in table}
-        self.assertEqual(["sh", "sleep"], sorted(by_name.keys()))
+        self.assertEqual(["python", "sh", "sleep"], sorted(by_name.keys()))
 
         for name in ["sh", "sleep"]:
             proc = by_name[name]
