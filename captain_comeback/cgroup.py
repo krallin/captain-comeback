@@ -99,8 +99,8 @@ class Cgroup(object):
             f.write("\n")
 
     def pids(self):
-        with open(self._tasks_file_path()) as f:
-            return [int(t) for t in f.readlines()]
+        with open(self._procs_file_path()) as f:
+            return set(int(t) for t in f.readlines())
 
     def ps_table(self):
         # Take a snapshot of the processes in this cgroup, which will be usable
@@ -124,5 +124,5 @@ class Cgroup(object):
     def _memory_limit_file_path(self):
         return os.path.join(self.path, "memory.limit_in_bytes")
 
-    def _tasks_file_path(self):
-        return os.path.join(self.path, "tasks")
+    def _procs_file_path(self):
+        return os.path.join(self.path, "cgroup.procs")
