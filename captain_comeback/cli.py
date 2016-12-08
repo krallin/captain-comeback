@@ -5,6 +5,7 @@ import argparse
 import threading
 import time
 import os
+import errno
 from six.moves import queue
 
 from captain_comeback.index import CgroupIndex
@@ -61,7 +62,13 @@ def run_loop(root_cg_path, activity_path, sync_target_interval,
             if poll_timeout <= 0:
                 break
             logger.debug("poll with timeout: %s", poll_timeout)
-            index.poll(poll_timeout)
+
+            try:
+                index.poll(poll_timeout)
+            except IOError as e:
+                if e.errno != errno.EINTR:
+                    raise
+                logger.warning("interrupted")
 
         for thread in [activity_thread, restarter_thread]:
             if not thread.is_alive():
