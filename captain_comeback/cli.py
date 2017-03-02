@@ -24,7 +24,7 @@ DEFAULT_RESTART_GRACE_PERIOD = 10
 
 
 def run_loop(root_cg_path, activity_path, sync_target_interval,
-             restart_grace_period):
+             restart_grace_period, wipe_fs):
     threading.current_thread().name = "index"
 
     job_queue = queue.Queue()
@@ -32,7 +32,8 @@ def run_loop(root_cg_path, activity_path, sync_target_interval,
     index = CgroupIndex(root_cg_path, job_queue, activity_queue)
     index.open()
 
-    restarter = RestartEngine(restart_grace_period, job_queue, activity_queue)
+    restarter = RestartEngine(restart_grace_period, job_queue, activity_queue,
+                              wipe_fs)
     restarter_thread = threading.Thread(target=restarter.run, name="restarter")
     restarter_thread.daemon = True
 
@@ -78,12 +79,12 @@ def run_loop(root_cg_path, activity_path, sync_target_interval,
     return 0
 
 
-def restart_one(root_cg, grace_period, container_id):
+def restart_one(root_cg, grace_period, wipe_fs, container_id):
     q = queue.Queue()
     cg = Cgroup(os.path.join(root_cg, container_id))
 
     try:
-        restart(grace_period, cg, q, q)
+        restart(grace_period, wipe_fs, cg, q, q)
     except IOError:
         logger.error("%s: container does not exist", cg.name())
         return 1
@@ -114,6 +115,8 @@ def main_wrapper(args):
                         help="enable debug logging")
     parser.add_argument("--restart", dest="container_id",
                         help="restart one container and exit")
+    parser.add_argument("--wipe-fs", default=False, action="store_true",
+                        help="wipe filesystems on restart")
 
     ns = parser.parse_args(args)
 
@@ -137,11 +140,12 @@ def main_wrapper(args):
     # If the --restart argument is present, just restart one container and
     # exit.
     if ns.container_id:
-        return restart_one(ns.root_cg, restart_grace_period, ns.container_id)
+        return restart_one(ns.root_cg, restart_grace_period, ns.wipe_fs,
+                           ns.container_id)
 
     # Otherwise the --restart argument was not there, start the main loop.
     return run_loop(ns.root_cg, ns.activity, sync_interval,
-                    restart_grace_period)
+                    restart_grace_period, ns.wipe_fs)
 
 
 def cli_entrypoint():

@@ -6,6 +6,8 @@ import threading
 import subprocess
 import time
 import errno
+import uuid
+import shutil
 
 import psutil
 
@@ -13,6 +15,13 @@ from captain_comeback.restart.messages import (RestartRequestedMessage,
                                                RestartCompleteMessage)
 from captain_comeback.activity.messages import (RestartCgroupMessage,
                                                 RestartTimeoutMessage)
+
+AUFS_DIFF_DIR = "/var/lib/docker/aufs/diff"
+AUFS_MOUNTS_DIR = "/var/lib/docker/image/aufs/layerdb/mounts"
+AUFS_MOUNT_FILE = "mount-id"
+AUFS_PREFIX = ".wh"
+
+BACKUP_DIR = "/var/lib/docker/.captain-comeback-backup"
 
 
 logger = logging.getLogger()
@@ -22,10 +31,11 @@ RESTART_STATE_POLLS = 20
 
 
 class RestartEngine(object):
-    def __init__(self, grace_period, job_queue, activity_queue):
+    def __init__(self, grace_period, job_queue, activity_queue, wipe_fs):
         self.grace_period = grace_period
         self.job_queue = job_queue
         self.activity_queue = activity_queue
+        self.wipe_fs = wipe_fs
         self._counter = 0
         self._running_restarts = set()
 
@@ -38,7 +48,8 @@ class RestartEngine(object):
 
         job_name = "restart-job-{0}".format(self._counter)
         self._counter += 1
-        args = self.grace_period, cg, self.job_queue, self.activity_queue
+        args = (self.grace_period, self.wipe_fs, cg, self.job_queue,
+                self.activity_queue)
         threading.Thread(target=restart, name=job_name, args=args).start()
 
     def _handle_restart_complete(self, cg):
@@ -58,9 +69,9 @@ class RestartEngine(object):
                 raise Exception("Unexpected message: {0}".format(message))
 
 
-def restart(grace_period, cg, job_queue, activity_queue):
+def restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
     try:
-        do_restart(grace_period, cg, job_queue, activity_queue)
+        do_restart(grace_period, wipe_fs, cg, job_queue, activity_queue)
     except:
         logger.exception("%s: restart failed", cg.name())
         raise
@@ -69,7 +80,7 @@ def restart(grace_period, cg, job_queue, activity_queue):
         job_queue.put(RestartCompleteMessage(cg))
 
 
-def do_restart(grace_period, cg, job_queue, activity_queue):
+def do_restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
     # Snapshot task usage
     logger.info("%s: restarting", cg.name())
 
@@ -142,14 +153,64 @@ def do_restart(grace_period, cg, job_queue, activity_queue):
         # file after the cgroup has exited.
         pass
 
-    restart_cmd = ["docker", "restart", "-t", "0", cg.name()]
-    proc = subprocess.Popen(restart_cmd, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE)
+    try_exec_and_wait(cg, "docker", "stop", "-t", "0", cg.name())
+
+    if wipe_fs:
+        try:
+            do_wipe_fs(cg)
+        except Exception:
+            logger.exception("%s: could not clean fs", cg.name())
+
+    try_exec_and_wait(cg, "docker", "restart", "-t", "0", cg.name())
+
+
+def do_wipe_fs(cg):
+    aufs_id = cg.name()
+    mount_id_path = os.path.join(AUFS_MOUNTS_DIR, cg.name(), AUFS_MOUNT_FILE)
+
+    try:
+        with open(mount_id_path) as f:
+            aufs_id = f.read()
+    except (IOError, OSError):
+        # Older Docker version, no mount ID
+        logger.warn("%s: mount ID not found at: %s",
+                    cg.name(), mount_id_path)
+
+    aufs_dir = os.path.join(AUFS_DIFF_DIR, aufs_id)
+    backup_dir = os.path.join(BACKUP_DIR, cg.name(), str(int(time.time())),
+                              str(uuid.uuid4()))
+
+    mkdir_p(backup_dir)
+
+    for entry in os.listdir(aufs_dir):
+        if entry.startswith(AUFS_PREFIX):
+            continue
+        src = os.path.join(aufs_dir, entry)
+        dst = os.path.join(backup_dir, entry)
+        logger.info("%s: transfering %s to %s", cg.name(), src, dst)
+        shutil.move(src, dst)
+
+
+def try_exec_and_wait(cg, *command):
+    proc = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
 
     out, err = proc.communicate()
+
     ret = proc.poll()
     if ret != 0:
-        logger.error("%s: failed to restart", cg.name())
+        logger.error("%s: failed: %s", cg.name(), str(command))
         logger.error("%s: status: %s", cg.name(), ret)
         logger.error("%s: stdout: %s", cg.name(), out)
         logger.error("%s: stderr: %s", cg.name(), err)
+
+
+def mkdir_p(path):
+    try:
+        os.makedirs(path)
+    except OSError as e:
+        if e.errno == errno.EEXIST and os.path.isdir(path):
+            pass
+        else:
+            raise
