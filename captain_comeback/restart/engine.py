@@ -153,13 +153,16 @@ def do_restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
         # file after the cgroup has exited.
         pass
 
-    try_exec_and_wait(cg, "docker", "stop", "-t", "0", cg.name())
+    stop_ok = try_exec_and_wait(cg, "docker", "stop", "-t", "0", cg.name())
 
     if wipe_fs:
-        try:
-            do_wipe_fs(cg)
-        except Exception:
-            logger.exception("%s: could not clean fs", cg.name())
+        if stop_ok:
+            try:
+                do_wipe_fs(cg)
+            except Exception:
+                logger.exception("%s: could not wipe fs", cg.name())
+        else:
+            logger.warn("%s: not wiping fs: stop failed", cg.name())
 
     try_exec_and_wait(cg, "docker", "restart", "-t", "0", cg.name())
 
@@ -197,13 +200,15 @@ def try_exec_and_wait(cg, *command):
     )
 
     out, err = proc.communicate()
-
     ret = proc.poll()
+
     if ret != 0:
         logger.error("%s: failed: %s", cg.name(), str(command))
         logger.error("%s: status: %s", cg.name(), ret)
         logger.error("%s: stdout: %s", cg.name(), out)
         logger.error("%s: stderr: %s", cg.name(), err)
+
+    return ret == 0
 
 
 def mkdir_p(path):
