@@ -150,7 +150,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         cg = self._launch_container(EXITS_IF_FILE)
         time.sleep(2)
 
-        restart(0, False, cg, q, q)
+        restart(1, False, cg, q, q)
         time.sleep(2)
 
         self.assertFalse(docker_json(cg)["State"]["Running"])
@@ -162,7 +162,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         cg = self._launch_container(EXITS_IF_FILE)
         time.sleep(2)
 
-        restart(0, True, cg, q, q)
+        restart(1, True, cg, q, q)
         time.sleep(2)
 
         self.assertTrue(docker_json(cg)["State"]["Running"])
