@@ -21,6 +21,10 @@ CG_DOCKER_ROOT_DIR = "/sys/fs/cgroup/memory/docker/"
 
 EXITS_WITH_TERM_1 = ["krallin/ubuntu-tini", "sleep", "100"]
 EXITS_WITH_TERM_ALL = ["ubuntu", "sh", "-c", "sleep 100"]
+EXITS_IF_FILE = [
+    "ubuntu", "sh", "-c",
+    "if test -f foo; then exit 1; else touch foo && sleep 100; fi"
+]
 NEVER_EXITS = ["ubuntu", "sleep", "100"]  # No default sighanders as PID 1
 
 
@@ -65,7 +69,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         cg = self._launch_container(EXITS_WITH_TERM_1)
         job_q = queue.Queue()
         activity_q = queue.Queue()
-        restart(10, cg, job_q, activity_q)
+        restart(10, False, cg, job_q, activity_q)
 
         self.assertHasMessageForCg(job_q, RestartCompleteMessage, cg.path)
         self.assertHasMessageForCg(activity_q, RestartCgroupMessage, cg.path)
@@ -75,7 +79,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         cg = self._launch_container(NEVER_EXITS)
         job_q = queue.Queue()
         activity_q = queue.Queue()
-        restart(3, cg, job_q, activity_q)
+        restart(3, False, cg, job_q, activity_q)
 
         self.assertHasMessageForCg(job_q, RestartCompleteMessage, cg.path)
         self.assertHasMessageForCg(activity_q, RestartCgroupMessage, cg.path)
@@ -89,7 +93,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         time_before = time.time()
 
         q = queue.Queue()
-        restart(10, cg, q, q)
+        restart(10, False, cg, q, q)
 
         time_after = time.time()
         pid_after = docker_json(cg)["State"]["Pid"]
@@ -104,7 +108,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         time_before = time.time()
 
         q = queue.Queue()
-        restart(10, cg, q, q)
+        restart(10, False, cg, q, q)
 
         time_after = time.time()
         pid_after = docker_json(cg)["State"]["Pid"]
@@ -119,7 +123,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         time_before = time.time()
 
         q = queue.Queue()
-        restart(3, cg, q, q)
+        restart(3, False, cg, q, q)
 
         time_after = time.time()
         pid_after = docker_json(cg)["State"]["Pid"]
@@ -133,16 +137,39 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         options = ["-p", "{0}:80".format(host_port)] + EXITS_WITH_TERM_1
         cg = self._launch_container(options)
         q = queue.Queue()
-        restart(10, cg, q, q)
+        restart(10, False, cg, q, q)
 
         binding = docker_json(cg)["NetworkSettings"]["Ports"]["80/tcp"][0]
         port = int(binding["HostPort"])
 
         self.assertEqual(host_port, port)
 
+    def test_restart_does_not_wipe_fs(self):
+        q = queue.Queue()
+
+        cg = self._launch_container(EXITS_IF_FILE)
+        time.sleep(2)
+
+        restart(1, False, cg, q, q)
+        time.sleep(2)
+
+        self.assertFalse(docker_json(cg)["State"]["Running"])
+
+    @unittest.skipUnless(os.geteuid() == 0, "requires root")
+    def test_restart_wipes_fs(self):
+        q = queue.Queue()
+
+        cg = self._launch_container(EXITS_IF_FILE)
+        time.sleep(2)
+
+        restart(1, True, cg, q, q)
+        time.sleep(2)
+
+        self.assertTrue(docker_json(cg)["State"]["Running"])
+
     @unittest.skipUnless(os.geteuid() == 0, "requires root")
     def test_restart_with_memory_limit(self):
         options = ["--memory", "10mb"] + EXITS_WITH_TERM_1
         cg = self._launch_container(options)
         q = queue.Queue()
-        restart(10, cg, q, q)
+        restart(10, False, cg, q, q)

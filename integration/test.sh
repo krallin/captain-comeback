@@ -2,8 +2,6 @@
 set -o errexit
 set -o nounset
 
-# TODO: Add check for swapoff?
-
 REL_HERE=$(dirname "${BASH_SOURCE}")
 HERE=$(cd "${REL_HERE}"; pwd)
 cd "$HERE"
@@ -28,7 +26,7 @@ HOG_END_MS="$(date +%s%3N)"
 echo "Exit hog: $(date)"
 
 # Start the captain
-run_captain_bg --restart-grace-period "$RESTART_TIMEOUT_S"
+run_captain_bg --restart-grace-period "$RESTART_TIMEOUT_S" --wipe-fs
 
 # Run the hog
 echo "Start test: $(date)"
