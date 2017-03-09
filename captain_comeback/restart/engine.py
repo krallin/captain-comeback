@@ -17,9 +17,10 @@ from captain_comeback.activity.messages import (RestartCgroupMessage,
                                                 RestartTimeoutMessage)
 
 AUFS_DIFF_DIR = "/var/lib/docker/aufs/diff"
+AUFS_MNT_DIR = "/var/lib/docker/aufs/mnt"
+
 AUFS_MOUNTS_DIR = "/var/lib/docker/image/aufs/layerdb/mounts"
 AUFS_MOUNT_FILE = "mount-id"
-AUFS_PREFIX = ".wh"
 
 BACKUP_DIR = "/var/lib/docker/.captain-comeback-backup"
 
@@ -170,6 +171,9 @@ def do_restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
 def do_wipe_fs(cg):
     aufs_id = cg.name()
     mount_id_path = os.path.join(AUFS_MOUNTS_DIR, cg.name(), AUFS_MOUNT_FILE)
+    restore_id = "cc-{0}".format(uuid.uuid4())
+
+    logger.info("%s: wipe with restore id: %s", cg.name(), restore_id)
 
     try:
         with open(mount_id_path) as f:
@@ -179,19 +183,37 @@ def do_wipe_fs(cg):
         logger.warn("%s: mount ID not found at: %s",
                     cg.name(), mount_id_path)
 
-    aufs_dir = os.path.join(AUFS_DIFF_DIR, aufs_id)
-    backup_dir = os.path.join(BACKUP_DIR, cg.name(), str(int(time.time())),
-                              str(uuid.uuid4()))
+    # Check that the mount directory is empty. We stopped the container, so it
+    # should be, but if it's not, we should bail now or risk bricking the
+    # container.
+    aufs_mnt = os.path.join(AUFS_MNT_DIR, aufs_id)
+    if os.listdir(aufs_mnt):
+        raise Exception("abort wipe: mnt is not empty: %s", aufs_mnt)
 
-    mkdir_p(backup_dir)
+    aufs_container = os.path.join(AUFS_DIFF_DIR, aufs_id)
+    aufs_outbound = os.path.join(AUFS_DIFF_DIR, "-".join([restore_id, "out"]))
+    aufs_inbound = os.path.join(AUFS_DIFF_DIR, "-".join([restore_id, "in"]))
+    os.mkdir(aufs_inbound, 0o755)
 
-    for entry in os.listdir(aufs_dir):
-        if entry.startswith(AUFS_PREFIX):
-            continue
-        src = os.path.join(aufs_dir, entry)
-        dst = os.path.join(backup_dir, entry)
-        logger.info("%s: transfering %s to %s", cg.name(), src, dst)
-        shutil.move(src, dst)
+    # This is the "critical section". If Docker tries to access the container
+    # while we're swapping these two directories (which is NOT atomic), then
+    # we'll have bricked the container (we won't have lost any data, though, so
+    # all in all we failed to make things better but we did not actively make
+    # anything worse).
+    logger.info("%s: rename: start: %s", cg.name(), restore_id)
+    os.rename(aufs_container, aufs_outbound)
+    try:
+        os.rename(aufs_inbound, aufs_container)
+    except Exception:
+        os.rename(aufs_outbound, aufs_container)
+        raise
+    logger.info("%s: rename: done: %s", cg.name(), restore_id)
+
+    backup = os.path.join(BACKUP_DIR, cg.name(), restore_id)
+    logger.info("%s: backup to: %s", cg.name(), backup)
+
+    mkdir_p(os.path.dirname(backup))
+    shutil.move(aufs_outbound, backup)
 
 
 def try_exec_and_wait(cg, *command):
