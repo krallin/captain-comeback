@@ -17,7 +17,7 @@ docker top "$cid" # Container should NOT have exited by now
 docker rm -f "$cid"
 
 # File should have been backed up
-find "/var/lib/docker/.captain-comeback-backup/${cid}/" | grep foo
+find "/var/lib/docker/aufs/captain-comeback-backup/${cid}-"* | grep foo
 
 
 echo "Test deleted files are restored"
