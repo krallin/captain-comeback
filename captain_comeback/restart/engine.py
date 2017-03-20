@@ -7,7 +7,6 @@ import subprocess
 import time
 import errno
 import uuid
-import shutil
 
 import psutil
 
@@ -16,17 +15,18 @@ from captain_comeback.restart.messages import (RestartRequestedMessage,
 from captain_comeback.activity.messages import (RestartCgroupMessage,
                                                 RestartTimeoutMessage)
 
-AUFS_DIFF_DIR = "/var/lib/docker/aufs/diff"
-AUFS_MNT_DIR = "/var/lib/docker/aufs/mnt"
+AUFS_BASE_DIR = "/var/lib/docker/aufs"
+
+AUFS_DIFF_DIR = os.path.join(AUFS_BASE_DIR, "diff")
+AUFS_MNT_DIR = os.path.join(AUFS_BASE_DIR, "mnt")
 
 AUFS_MOUNTS_DIR = "/var/lib/docker/image/aufs/layerdb/mounts"
 AUFS_MOUNT_FILE = "mount-id"
 
-BACKUP_DIR = "/var/lib/docker/.captain-comeback-backup"
+BACKUP_DIR = os.path.join(AUFS_BASE_DIR, "captain-comeback-backup")
 
 
 logger = logging.getLogger()
-
 
 RESTART_STATE_POLLS = 20
 
@@ -209,11 +209,11 @@ def do_wipe_fs(cg):
         raise
     logger.info("%s: rename: done: %s", cg.name(), restore_id)
 
-    backup = os.path.join(BACKUP_DIR, cg.name(), restore_id)
+    backup = os.path.join(BACKUP_DIR, "{0}-{1}".format(cg.name(), restore_id))
     logger.info("%s: backup to: %s", cg.name(), backup)
 
     mkdir_p(os.path.dirname(backup))
-    shutil.move(aufs_outbound, backup)
+    os.rename(aufs_outbound, backup)
 
 
 def try_exec_and_wait(cg, *command):
