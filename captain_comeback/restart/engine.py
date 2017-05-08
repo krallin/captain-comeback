@@ -51,7 +51,18 @@ class RestartEngine(object):
         self._counter += 1
         args = (self.grace_period, self.wipe_fs, cg, self.job_queue,
                 self.activity_queue)
-        threading.Thread(target=restart, name=job_name, args=args).start()
+
+        t = threading.Thread(target=restart, name=job_name, args=args)
+
+        try:
+            t.start()
+        except RuntimeError as e:
+            # We have seem some cases where Captain Comeback is working but
+            # unable to spawn new threads; falling back to synchronous restarts
+            # is a way to guard against that.
+            logger.error("%s: could not spawn restart thread: %s",
+                         cg.name(), e)
+            t.run()
 
     def _handle_restart_complete(self, cg):
         logger.debug("%s: registering restart complete", cg.name())
