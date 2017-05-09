@@ -228,20 +228,32 @@ def do_wipe_fs(cg):
 
 
 def try_exec_and_wait(cg, *command):
-    proc = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
+    retry_schedule = [0, 2, 5, 10]
 
-    out, err = proc.communicate()
-    ret = proc.poll()
+    while retry_schedule:
+        sleep_for = retry_schedule.pop(0)
+        if sleep_for:
+            logger.error("%s: wait %d seconds before retrying",
+                         cg.name(), sleep_for)
+            time.sleep(sleep_for)
 
-    if ret != 0:
+        proc = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+
+        out, err = proc.communicate()
+        ret = proc.poll()
+
+        if ret == 0:
+            return True
+
         logger.error("%s: failed: %s", cg.name(), str(command))
         logger.error("%s: status: %s", cg.name(), ret)
         logger.error("%s: stdout: %s", cg.name(), out)
         logger.error("%s: stderr: %s", cg.name(), err)
 
-    return ret == 0
+    logger.error("%s: failed after all retries", cg.name())
+    return False
 
 
 def mkdir_p(path):
