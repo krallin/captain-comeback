@@ -47,8 +47,8 @@ class ActivityEngine(object):
                     [
                         pinfo["pid"],
                         pinfo["ppid"],
-                        pinfo["memory_info"].vms / KB,
-                        pinfo["memory_info"].rss / KB,
+                        int(pinfo["memory_info"].vms / KB),
+                        int(pinfo["memory_info"].rss / KB),
                         PROC_STATUSES_RAW.get(pinfo['status']) or "?",
                         subprocess.list2cmdline(pinfo["cmdline"])
                     ]

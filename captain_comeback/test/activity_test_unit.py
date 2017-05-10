@@ -79,6 +79,29 @@ class ActivityTestUnit(unittest.TestCase):
             re.compile(r'456\s+123\s+4\s+2\s+R\s+sh -c "a && b"')
         ])
 
+    def test_large_memory_value(self):
+        # Newer versions of Python (e.g. 3.4) will show this value in
+        # scientific notation, which isn't desirable here.
+        size = 2 * 1024 * 1024 * 1024  # 2GB
+        MemInfo = namedtuple('MemInfo', ["rss", "vms"])
+        ps_table = [
+            {
+                "pid": 123,
+                "ppid": 0,
+                "memory_info": MemInfo(rss=size, vms=size),
+                "cmdline": ["some", "proc"],
+                "status": psutil.STATUS_RUNNING,
+            }
+        ]
+        self.q.put(RestartCgroupMessage(Cgroup("/some/foo"), ps_table))
+        self.q.put(ExitMessage())
+        self.engine.run()
+        self.assertHasLogged("foo", [
+            "container exceeded its memory allocation",
+            "container is restarting:",
+            re.compile(r"123\s+0\s+2097152\s+2097152\s+R\s+some proc"),
+        ])
+
     def test_restart_timeout(self):
         self.q.put(RestartTimeoutMessage(Cgroup("/some/foo"), 3))
         self.q.put(ExitMessage())
