@@ -24,4 +24,5 @@ install:
   - gosu root make install
   - gosu root pip install -r test_requirements.txt
 script:
+  - docker run -i --rm alpine true
   - gosu root make test
