@@ -87,8 +87,9 @@ def restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
     except:
         logger.exception("%s: restart failed", cg.name())
         raise
+    else:
+        logger.info("%s: restart succeeded", cg.name())
     finally:
-        logger.info("%s: restart complete", cg.name())
         job_queue.put(RestartCompleteMessage(cg))
 
 
@@ -96,7 +97,12 @@ def do_restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
     # Snapshot task usage
     logger.info("%s: restarting", cg.name())
 
-    activity_queue.put(RestartCgroupMessage(cg, cg.ps_table()))
+    try:
+        ps_table = cg.ps_table()
+    except EnvironmentError as e:
+        ps_table = []
+
+    activity_queue.put(RestartCgroupMessage(cg, ps_table))
 
     # We initiate the restart first. This increases our chances of getting a
     # successful restart by signalling a potential memory hog before we
@@ -108,16 +114,19 @@ def do_restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
     # It's possible that between the two steps, the container will have
     # exited already, but Docker will do the right thing and restart our
     # process in this case.
-    for pid in cg.pids():
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError as e:
-            if e.errno == errno.ESRCH:
-                # That process exited already. Who cares? We don't.
-                logger.debug("%s: %s had already exited", cg.name(), pid)
-            else:
-                logger.error("%s: failed to deliver SIGTERM to %s: %s",
-                             cg.name(), pid, e)
+    try:
+        for pid in cg.pids():
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError as e:
+                if e.errno == errno.ESRCH:
+                    # That process exited already. Who cares? We don't.
+                    logger.debug("%s: %s had already exited", cg.name(), pid)
+                else:
+                    logger.error("%s: failed to deliver SIGTERM to %s: %s",
+                                 cg.name(), pid, e)
+    except EnvironmentError as e:
+        logger.error("%s: could not signal processes: %s", cg.name(), e)
 
     signaled_at = time.time()
 
@@ -176,7 +185,9 @@ def do_restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
         else:
             logger.warn("%s: not wiping fs: stop failed", cg.name())
 
-    try_exec_and_wait(cg, "docker", "restart", "-t", "0", cg.name())
+    ok = try_exec_and_wait(cg, "docker", "restart", "-t", "0", cg.name())
+    if not ok:
+        raise Exception("docker restart failed")
 
 
 def do_wipe_fs(cg):
