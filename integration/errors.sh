@@ -11,7 +11,7 @@ echo "Status OK"
 
 echo "Checking error message on bogus restart"
 captain-comeback --restart foo 2>&1 \
-  | grep -qE "ERROR.+foo.+does not exist"
+  | grep -qE "ERROR.+foo"
 if [[ "$?" != 0 ]]; then
   echo "Restarting a bogus container did not print an error"
   exit 1
