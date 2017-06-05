@@ -102,6 +102,15 @@ class ActivityTestUnit(unittest.TestCase):
             re.compile(r"123\s+0\s+2097152\s+2097152\s+R\s+some proc"),
         ])
 
+    def test_no_pids(self):
+        self.q.put(RestartCgroupMessage(Cgroup("/some/foo"), []))
+        self.q.put(ExitMessage())
+        self.engine.run()
+        self.assertHasLogged("foo", [
+            "container exceeded its memory allocation",
+            "container is restarting:",
+        ])
+
     def test_restart_timeout(self):
         self.q.put(RestartTimeoutMessage(Cgroup("/some/foo"), 3))
         self.q.put(ExitMessage())

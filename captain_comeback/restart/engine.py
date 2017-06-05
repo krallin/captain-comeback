@@ -25,6 +25,11 @@ AUFS_MOUNT_FILE = "mount-id"
 
 BACKUP_DIR = os.path.join(AUFS_BASE_DIR, "captain-comeback-backup")
 
+DOCKER_FATAL_ERRORS = [
+    "No such container",
+    "no such id",
+]
+
 
 logger = logging.getLogger()
 
@@ -87,8 +92,9 @@ def restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
     except:
         logger.exception("%s: restart failed", cg.name())
         raise
+    else:
+        logger.info("%s: restart succeeded", cg.name())
     finally:
-        logger.info("%s: restart complete", cg.name())
         job_queue.put(RestartCompleteMessage(cg))
 
 
@@ -96,7 +102,12 @@ def do_restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
     # Snapshot task usage
     logger.info("%s: restarting", cg.name())
 
-    activity_queue.put(RestartCgroupMessage(cg, cg.ps_table()))
+    try:
+        ps_table = cg.ps_table()
+    except EnvironmentError as e:
+        ps_table = []
+
+    activity_queue.put(RestartCgroupMessage(cg, ps_table))
 
     # We initiate the restart first. This increases our chances of getting a
     # successful restart by signalling a potential memory hog before we
@@ -108,16 +119,19 @@ def do_restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
     # It's possible that between the two steps, the container will have
     # exited already, but Docker will do the right thing and restart our
     # process in this case.
-    for pid in cg.pids():
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError as e:
-            if e.errno == errno.ESRCH:
-                # That process exited already. Who cares? We don't.
-                logger.debug("%s: %s had already exited", cg.name(), pid)
-            else:
-                logger.error("%s: failed to deliver SIGTERM to %s: %s",
-                             cg.name(), pid, e)
+    try:
+        for pid in cg.pids():
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError as e:
+                if e.errno == errno.ESRCH:
+                    # That process exited already. Who cares? We don't.
+                    logger.debug("%s: %s had already exited", cg.name(), pid)
+                else:
+                    logger.error("%s: failed to deliver SIGTERM to %s: %s",
+                                 cg.name(), pid, e)
+    except EnvironmentError as e:
+        logger.error("%s: could not signal processes: %s", cg.name(), e)
 
     signaled_at = time.time()
 
@@ -165,7 +179,7 @@ def do_restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
         # file after the cgroup has exited.
         pass
 
-    stop_ok = try_exec_and_wait(cg, "docker", "stop", "-t", "0", cg.name())
+    stop_ok = try_docker(cg, "docker", "stop", "-t", "0", cg.name())
 
     if wipe_fs:
         if stop_ok:
@@ -176,7 +190,9 @@ def do_restart(grace_period, wipe_fs, cg, job_queue, activity_queue):
         else:
             logger.warn("%s: not wiping fs: stop failed", cg.name())
 
-    try_exec_and_wait(cg, "docker", "restart", "-t", "0", cg.name())
+    ok = try_docker(cg, "docker", "restart", "-t", "0", cg.name())
+    if not ok:
+        raise Exception("docker restart failed")
 
 
 def do_wipe_fs(cg):
@@ -227,7 +243,7 @@ def do_wipe_fs(cg):
     os.rename(aufs_outbound, backup)
 
 
-def try_exec_and_wait(cg, *command):
+def try_docker(cg, *command):
     retry_schedule = [0, 2, 5, 10]
 
     while retry_schedule:
@@ -241,7 +257,7 @@ def try_exec_and_wait(cg, *command):
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
 
-        out, err = proc.communicate()
+        out, err = [x.decode("utf-8").strip() for x in proc.communicate()]
         ret = proc.poll()
 
         if ret == 0:
@@ -251,6 +267,10 @@ def try_exec_and_wait(cg, *command):
         logger.error("%s: status: %s", cg.name(), ret)
         logger.error("%s: stdout: %s", cg.name(), out)
         logger.error("%s: stderr: %s", cg.name(), err)
+
+        if any(e in err for e in DOCKER_FATAL_ERRORS):
+            logger.error("%s: fatal error: no more retries", cg.name())
+            break
 
     logger.error("%s: failed after all retries", cg.name())
     return False
