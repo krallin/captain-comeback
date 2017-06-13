@@ -31,6 +31,7 @@ setup(
     packages=[
         'captain_comeback',
         'captain_comeback.restart',
+        'captain_comeback.restart.adapter',
         'captain_comeback.activity',
         'captain_comeback.test'
     ],

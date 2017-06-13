@@ -6,6 +6,7 @@ import threading
 import time
 import os
 import errno
+import importlib
 from six.moves import queue
 
 from captain_comeback.index import CgroupIndex
@@ -20,11 +21,12 @@ logger = logging.getLogger()
 DEFAULT_ROOT_CG = "/sys/fs/cgroup/memory/docker"
 DEFAULT_ACTIVITY_DIR = "/var/log/container-activity"
 DEFAULT_SYNC_TARGET_INTERVAL = 1
+DEFAULT_RESTART_ADAPTER = "captain_comeback.restart.adapter.docker"
 DEFAULT_RESTART_GRACE_PERIOD = 10
 
 
 def run_loop(root_cg_path, activity_path, sync_target_interval,
-             restart_grace_period, wipe_fs):
+             restart_adapter, restart_grace_period):
     threading.current_thread().name = "index"
 
     job_queue = queue.Queue()
@@ -32,8 +34,8 @@ def run_loop(root_cg_path, activity_path, sync_target_interval,
     index = CgroupIndex(root_cg_path, job_queue, activity_queue)
     index.open()
 
-    restarter = RestartEngine(restart_grace_period, job_queue, activity_queue,
-                              wipe_fs)
+    restarter = RestartEngine(restart_adapter, restart_grace_period, job_queue,
+                              activity_queue)
     restarter_thread = threading.Thread(target=restarter.run, name="restarter")
     restarter_thread.daemon = True
 
@@ -79,12 +81,13 @@ def run_loop(root_cg_path, activity_path, sync_target_interval,
     return 0
 
 
-def restart_one(root_cg, grace_period, wipe_fs, container_id):
+def restart_one(root_cg_path, restart_adapter, restart_grace_period,
+                container_id):
     q = queue.Queue()
-    cg = Cgroup(os.path.join(root_cg, container_id))
+    cg = Cgroup(os.path.join(root_cg_path, container_id))
 
     try:
-        restart(grace_period, wipe_fs, cg, q, q)
+        restart(restart_adapter, restart_grace_period, cg, q, q)
     except IOError:
         logger.error("%s: container does not exist", cg.name())
         return 1
@@ -108,6 +111,9 @@ def main_wrapper(args):
     parser.add_argument("--sync-interval",
                         default=DEFAULT_SYNC_TARGET_INTERVAL, type=float,
                         help="target sync interval to refresh cgroups")
+    parser.add_argument("--restart-adapter",
+                        default=DEFAULT_RESTART_ADAPTER, type=str,
+                        help="module must expose thread safe restart function")
     parser.add_argument("--restart-grace-period",
                         default=DEFAULT_RESTART_GRACE_PERIOD, type=int,
                         help="how long to wait before sending SIGKILL")
@@ -116,7 +122,7 @@ def main_wrapper(args):
     parser.add_argument("--restart", dest="container_id",
                         help="restart one container and exit")
     parser.add_argument("--wipe-fs", default=False, action="store_true",
-                        help="wipe filesystems on restart")
+                        help="wipe filesystems on restart (use adapter)")
 
     ns = parser.parse_args(args)
 
@@ -131,6 +137,16 @@ def main_wrapper(args):
         logger.warning("invalid sync interval %s, must be > 0", sync_interval)
         sync_interval = DEFAULT_SYNC_TARGET_INTERVAL
 
+    if ns.wipe_fs:
+        if ns.restart_adapter == DEFAULT_RESTART_ADAPTER:
+            ns.restart_adapter = "{0}_wipe_fs".format(DEFAULT_RESTART_ADAPTER)
+        else:
+            logger.error("--wipe-fs compatibility requires default adapter")
+            return 1
+
+    logger.info("using restart adapter: %s", ns.restart_adapter)
+    restart_adapter = importlib.import_module(ns.restart_adapter)
+
     restart_grace_period = ns.restart_grace_period
     if restart_grace_period < 0:
         logger.warning("invalid restart grace period %s, must be > 0",
@@ -140,12 +156,12 @@ def main_wrapper(args):
     # If the --restart argument is present, just restart one container and
     # exit.
     if ns.container_id:
-        return restart_one(ns.root_cg, restart_grace_period, ns.wipe_fs,
+        return restart_one(ns.root_cg, restart_adapter, restart_grace_period,
                            ns.container_id)
 
     # Otherwise the --restart argument was not there, start the main loop.
     return run_loop(ns.root_cg, ns.activity, sync_interval,
-                    restart_grace_period, ns.wipe_fs)
+                    restart_adapter, restart_grace_period)
 
 
 def cli_entrypoint():

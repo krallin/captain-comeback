@@ -8,6 +8,7 @@ import time
 from six.moves import queue
 
 from captain_comeback.restart.engine import restart
+from captain_comeback.restart.adapter import (docker, docker_wipe_fs, null)
 from captain_comeback.cgroup import Cgroup
 from captain_comeback.restart.messages import RestartCompleteMessage
 from captain_comeback.activity.messages import (RestartCgroupMessage,
@@ -69,7 +70,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         cg = self._launch_container(EXITS_WITH_TERM_1)
         job_q = queue.Queue()
         activity_q = queue.Queue()
-        restart(10, False, cg, job_q, activity_q)
+        restart(docker, 10, cg, job_q, activity_q)
 
         self.assertHasMessageForCg(job_q, RestartCompleteMessage, cg.path)
         self.assertHasMessageForCg(activity_q, RestartCgroupMessage, cg.path)
@@ -79,7 +80,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         cg = self._launch_container(NEVER_EXITS)
         job_q = queue.Queue()
         activity_q = queue.Queue()
-        restart(3, False, cg, job_q, activity_q)
+        restart(docker, 3, cg, job_q, activity_q)
 
         self.assertHasMessageForCg(job_q, RestartCompleteMessage, cg.path)
         self.assertHasMessageForCg(activity_q, RestartCgroupMessage, cg.path)
@@ -93,7 +94,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         time_before = time.time()
 
         q = queue.Queue()
-        restart(10, False, cg, q, q)
+        restart(docker, 10, cg, q, q)
 
         time_after = time.time()
         pid_after = docker_json(cg)["State"]["Pid"]
@@ -108,7 +109,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         time_before = time.time()
 
         q = queue.Queue()
-        restart(10, False, cg, q, q)
+        restart(docker, 10, cg, q, q)
 
         time_after = time.time()
         pid_after = docker_json(cg)["State"]["Pid"]
@@ -123,7 +124,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         time_before = time.time()
 
         q = queue.Queue()
-        restart(3, False, cg, q, q)
+        restart(docker, 3, cg, q, q)
 
         time_after = time.time()
         pid_after = docker_json(cg)["State"]["Pid"]
@@ -137,7 +138,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         options = ["-p", "{0}:80".format(host_port)] + EXITS_WITH_TERM_1
         cg = self._launch_container(options)
         q = queue.Queue()
-        restart(10, False, cg, q, q)
+        restart(docker, 10, cg, q, q)
 
         binding = docker_json(cg)["NetworkSettings"]["Ports"]["80/tcp"][0]
         port = int(binding["HostPort"])
@@ -150,7 +151,18 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         cg = self._launch_container(EXITS_IF_FILE)
         time.sleep(2)
 
-        restart(1, False, cg, q, q)
+        restart(docker, 1, cg, q, q)
+        time.sleep(2)
+
+        self.assertFalse(docker_json(cg)["State"]["Running"])
+
+    def test_restart_kills_processes(self):
+        q = queue.Queue()
+
+        cg = self._launch_container(NEVER_EXITS)
+        time.sleep(2)
+
+        restart(null, 1, cg, q, q)
         time.sleep(2)
 
         self.assertFalse(docker_json(cg)["State"]["Running"])
@@ -162,7 +174,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         cg = self._launch_container(EXITS_IF_FILE)
         time.sleep(2)
 
-        restart(1, True, cg, q, q)
+        restart(docker_wipe_fs, 1, cg, q, q)
         time.sleep(2)
 
         self.assertTrue(docker_json(cg)["State"]["Running"])
@@ -172,4 +184,4 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         options = ["--memory", "10mb"] + EXITS_WITH_TERM_1
         cg = self._launch_container(options)
         q = queue.Queue()
-        restart(10, False, cg, q, q)
+        restart(docker, 10, cg, q, q)

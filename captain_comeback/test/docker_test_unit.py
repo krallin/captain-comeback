@@ -5,10 +5,10 @@ import shutil
 import time
 
 from captain_comeback.cgroup import Cgroup
-from captain_comeback.restart import engine
+from captain_comeback.restart.adapter import docker
 
 
-class EngineTestUnit(unittest.TestCase):
+class DockerTestUnit(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
 
@@ -24,7 +24,7 @@ class EngineTestUnit(unittest.TestCase):
                 'fi'.format(test_file, test_file)
 
         cmd = ['sh', '-c', shell]
-        ret = engine.try_docker(Cgroup("/some/foo"), *cmd)
+        ret = docker.try_docker(Cgroup("/some/foo"), *cmd)
         self.assertTrue(ret)
 
     def test_try_docker_without_retry(self):
@@ -36,12 +36,12 @@ class EngineTestUnit(unittest.TestCase):
                 'fi'.format(test_file, test_file)
 
         cmd = ['sh', '-c', shell]
-        ret = engine.try_docker(Cgroup("/some/foo"), *cmd)
+        ret = docker.try_docker(Cgroup("/some/foo"), *cmd)
         self.assertTrue(ret)
 
     def test_try_docker_and_wait_fatal(self):
         t0 = time.time()
         cmd = ['docker', 'restart', 'foobar']
-        ret = engine.try_docker(Cgroup("/some/foo"), *cmd)
+        ret = docker.try_docker(Cgroup("/some/foo"), *cmd)
         self.assertFalse(ret)
         self.assertLess(time.time() - t0, 1)

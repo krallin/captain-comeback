@@ -25,8 +25,16 @@ clean-pyc:
 clean-tox:
 	rm -rf .tox/
 
-test:
+integration/hog: integration/hog.c
+	gcc integration/hog.c -Wl,--no-export-dynamic -static -o integration/hog
+
+noswap:
+	integration/noswap.sh
+
+unit: integration/hog noswap
 	python setup.py nosetests
+
+integration: install integration/hog noswap
 	integration/test.sh
 	integration/ignore.sh
 	integration/restart.sh
@@ -35,4 +43,6 @@ test:
 	integration/wipe.sh
 	integration/stopped.sh
 
-.PHONY: release dist install clean-tox clean-pyc clean-build test
+test: unit integration
+
+.PHONY: release dist install clean-tox clean-pyc clean-build test noswap unit integration
