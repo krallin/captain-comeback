@@ -14,15 +14,11 @@ want_root() {
 }
 
 want_noswap() {
-  local swap_total="$(grep "SwapTotal" /proc/meminfo)"
-  if [[ ! "$swap_total" =~ SwapTotal:.+0\ kB ]]; then
-    echo "You must disable swap to run this test"
-    exit 1
-  fi
+  true
 }
 
 want_hog() {
-  gcc hog.c -Wl,--no-export-dynamic -static -o hog
+  test -f hog
 }
 
 

@@ -7,6 +7,7 @@ import subprocess
 import unittest
 import uuid
 import resource
+import logging
 from six.moves import queue
 
 from captain_comeback.index import CgroupIndex
@@ -20,7 +21,12 @@ from captain_comeback.test.queue_assertion_helper import (
         QueueAssertionHelper)
 
 
-CG_PARENT_NAME = "captain-comeback-integration"
+logger = logging.getLogger("TEST")
+
+
+HOG = os.path.join(os.path.dirname(__file__), '..', '..', 'integration', 'hog')
+DEVNULL = open(os.devnull, 'w')
+CG_PARENT_BASE = "captain-comeback-integration"
 CG_ROOT_DIR = "/sys/fs/cgroup/memory"
 
 
@@ -54,24 +60,25 @@ def create_random_cg(parent_path=None):
     return create_cg(str(uuid.uuid4()), parent_path)
 
 
-def enable_memlimit_and_trigger_oom(path):
+def set_memlimit(path):
+    logger.info("set memlimit in: %s", path)
     cg = Cgroup(path)
-    cg.open()
-
-    # Set a memory limit then disable the OOM killer via a wakeup
     cg.set_memory_limit_in_bytes(1024 * 1024 * 128)  # 128 MB
-    cg.wakeup(queue.Queue())
-    cg.close()
 
-    test_program = 'l = []\nwhile True:\n  l.append(object())'
 
-    subprocess.Popen(["sudo", "cgexec", "-g", descriptor_from_cg_path(path),
-                      "python", "-c", test_program])
+def trigger_oom(path):
+    logger.info("trigger oom in: %s", path)
+
+    subprocess.Popen(
+        ["sudo", "cgexec", "-g", descriptor_from_cg_path(path), HOG],
+        stdout=DEVNULL, stderr=DEVNULL
+    )
 
 
 class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
     def setUp(self):
-        self.parent_cg_path = create_cg(CG_PARENT_NAME)
+        name = "{0}-{1}".format(CG_PARENT_BASE, str(uuid.uuid4()))
+        self.parent_cg_path = create_cg(name)
 
     def tearDown(self):
         # Kill every task in subgroups to be safe, then recursively tear down
@@ -85,8 +92,10 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
             pass
         else:
             for pid in pids:
+                logger.warn("cleanup proc: %s", str(pid))
                 subprocess.check_call(["sudo", "kill", "-KILL", pid])
 
+        logger.info("cleanup cg: %s", self.parent_cg_path)
         delete_cg(self.parent_cg_path, recursive=True)
 
     def test_index_sync(self):
@@ -159,12 +168,16 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
         self.assertHasNoMessages(activity_q)
         index.sync()
 
-        enable_memlimit_and_trigger_oom(cg_path)
+        self.assertHasMessageForCg(activity_q, NewCgroupMessage, cg_path)
+
+        set_memlimit(cg_path)
+        index.sync()
         self.assertHasNoMessages(job_q)
+
+        trigger_oom(cg_path)
         index.poll(10)
 
         self.assertHasMessageForCg(job_q, RestartRequestedMessage, cg_path)
-        self.assertHasMessageForCg(activity_q, NewCgroupMessage, cg_path)
 
         index.close()
 
@@ -185,8 +198,11 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
                                        self.ANY_CG)
         self.assertHasNoMessages(activity_q)
 
-        enable_memlimit_and_trigger_oom(cg_path)
+        set_memlimit(cg_path)
+        index.sync()
         self.assertHasNoMessages(job_q)
+
+        trigger_oom(cg_path)
         index.poll(10)
 
         self.assertHasMessageForCg(job_q, RestartRequestedMessage, cg_path)
@@ -283,7 +299,11 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
         cg.wakeup(q)
         self.assertHasNoMessages(q)
 
-        enable_memlimit_and_trigger_oom(cg_path)
+        set_memlimit(cg_path)
+        cg.wakeup(q)
+        self.assertHasNoMessages(q)
+
+        trigger_oom(cg_path)
 
         # The test program should fill 128 MB rather fast; give it 10s
         for _ in range(100):
