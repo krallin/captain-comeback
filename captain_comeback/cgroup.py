@@ -72,17 +72,17 @@ class Cgroup(object):
 
         try:
             oom_control_status = self.oom_control_status()
+
+            if oom_control_status["oom_kill_disable"] == "0":
+                self.on_oom_killer_enabled(job_queue)
+
+            if oom_control_status["under_oom"] == "1":
+                self.on_oom_event(job_queue)
         except EnvironmentError:
             logger.warning("%s: cgroup is stale", self.name())
             if raise_for_stale:
                 raise
             return
-
-        if oom_control_status["oom_kill_disable"] == "0":
-            self.on_oom_killer_enabled(job_queue)
-
-        if oom_control_status["under_oom"] == "1":
-            self.on_oom_event(job_queue)
 
     def oom_control_status(self):
         self.oom_control.seek(0)
