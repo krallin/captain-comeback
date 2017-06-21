@@ -59,6 +59,13 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
         self._cids.append(cid)
         return Cgroup("/".join([CG_DOCKER_ROOT_DIR, cid]))
 
+    def _wait_pids(self, cgroup, count):
+        for _ in range(100):
+            time.sleep(0.05)
+            if len(cgroup.pids()) >= count:
+                return
+        self.fail("{0} never had {1} pids", cgroup.name(), count)
+
     def setUp(self):
         self._cids = []
 
@@ -68,6 +75,8 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
 
     def test_notifies_queues(self):
         cg = self._launch_container(EXITS_WITH_TERM_1)
+        self._wait_pids(cg, 2)
+
         job_q = queue.Queue()
         activity_q = queue.Queue()
         restart(docker, 10, cg, job_q, activity_q)
@@ -78,6 +87,8 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
 
     def test_notifies_queues_timeout(self):
         cg = self._launch_container(NEVER_EXITS)
+        self._wait_pids(cg, 1)
+
         job_q = queue.Queue()
         activity_q = queue.Queue()
         restart(docker, 3, cg, job_q, activity_q)
@@ -89,6 +100,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
 
     def test_restart_container_with_term_1(self):
         cg = self._launch_container(EXITS_WITH_TERM_1)
+        self._wait_pids(cg, 2)
 
         pid_before = docker_json(cg)["State"]["Pid"]
         time_before = time.time()
@@ -104,6 +116,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
 
     def test_restart_container_with_term_all(self):
         cg = self._launch_container(EXITS_WITH_TERM_ALL)
+        self._wait_pids(cg, 2)
 
         pid_before = docker_json(cg)["State"]["Pid"]
         time_before = time.time()
@@ -119,6 +132,7 @@ class RestartTestIntegration(unittest.TestCase, QueueAssertionHelper):
 
     def test_restarts_misbehaved_container(self):
         cg = self._launch_container(NEVER_EXITS)
+        self._wait_pids(cg, 1)
 
         pid_before = docker_json(cg)["State"]["Pid"]
         time_before = time.time()
