@@ -8,6 +8,8 @@ import unittest
 import uuid
 import resource
 import logging
+import random
+import threading
 from six.moves import queue
 
 from captain_comeback.index import CgroupIndex
@@ -34,16 +36,11 @@ def descriptor_from_cg_path(path):
     return "memory:{0}".format(path.replace(CG_ROOT_DIR, ""))
 
 
-def delete_cg(path, recursive=False):
-    command = ["sudo", "cgdelete", "-g", descriptor_from_cg_path(path)]
-    if recursive:
-        command.append("-r")
-    subprocess.call(command)
-
-
 def create_cg(name, parent_path=None):
     parent_path = parent_path or CG_ROOT_DIR
     path = "{0}/{1}".format(parent_path, name)
+
+    logger.info("create_cg: %s", path)
 
     user_name = pwd.getpwuid(os.geteuid()).pw_name
     group_name = grp.getgrgid(os.getegid()).gr_name
@@ -54,6 +51,30 @@ def create_cg(name, parent_path=None):
                            "-t", user_spec, "-a", user_spec])
 
     return path
+
+
+def delete_cg(path, recursive=False):
+    logger.info("delete_cg: %s", path)
+
+    command = ["sudo", "cgdelete", "-g", descriptor_from_cg_path(path)]
+    if recursive:
+        command.append("-r")
+    subprocess.call(command)
+
+
+def quick_create_cg(name, parent_path):
+    # sudo + cgcreate is way too slow to trigger a race here, so we
+    # sacrifice test portability (these must run as root) for
+    # speed.
+    path = os.path.join(parent_path, name)
+    logger.debug("quick_create_cg: make %s", name)
+    os.mkdir(path)
+    return path
+
+
+def quick_delete_cg(name):
+    logger.debug("quick_del_cg: del %s", name)
+    os.rmdir(name)
 
 
 def create_random_cg(parent_path=None):
@@ -226,6 +247,127 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
         self.assertHasMessageForCg(activity_q, StaleCgroupMessage, cg_path)
 
         index.close()
+
+    @unittest.skipUnless(os.geteuid() == 0, "requires root")
+    def test_index_leak(self):
+        job_q = queue.Queue()
+        activity_q = queue.Queue()
+        index = CgroupIndex(self.parent_cg_path, job_q, activity_q)
+
+        fd_dir = os.path.join('/proc', str(os.getpid()), 'fd')
+
+        fd_initial = len(os.listdir(fd_dir))
+        logger.debug("fd_initial=%d", fd_initial)
+
+        index.open()
+
+        fd_intermediate = len(os.listdir(fd_dir))
+        logger.debug("fd_intermediate=%d", fd_intermediate)
+
+        for _ in range(100):
+            fd0 = len(os.listdir(fd_dir))
+
+            cgs = [
+                quick_create_cg(str(uuid.uuid4()), self.parent_cg_path)
+                for _ in range(100)
+            ]
+
+            index.sync()
+            fd1 = len(os.listdir(fd_dir))
+
+            index.sync()
+            fd2 = len(os.listdir(fd_dir))
+
+            logger.debug("fd0=%d, fd1=%d, fd2=%d", fd0, fd1, fd2)
+
+            self.assertEqual(fd0, fd_intermediate)
+            self.assertEqual(fd1, fd2)
+
+            for cg in cgs:
+                quick_delete_cg(cg)
+
+            index.sync()
+
+        index.close()
+        fd_final = len(os.listdir(fd_dir))
+        logger.debug("fd_final=%d", fd_final)
+
+        self.assertEqual(fd_final, fd_initial)
+
+    @unittest.skipUnless(os.geteuid() == 0, "requires root")
+    def test_index_race(self):
+        ready_q = queue.Queue()
+        exit_q = queue.Queue()
+
+        cg_count = 100
+        cg_cycle = 10
+        index_syncs = 50
+
+        file_limit = cg_count * 5
+        resource.setrlimit(resource.RLIMIT_NOFILE, (file_limit, file_limit))
+
+        def racer():
+            cgs = [
+                quick_create_cg(str(uuid.uuid4()), self.parent_cg_path)
+                for _ in range(cg_count)
+            ]
+
+            ready_q.put(None)
+
+            i = 0
+
+            while True:
+                i += 1
+
+                try:
+                    exit_q.get_nowait()
+                except queue.Empty:
+                    pass
+                else:
+                    break
+
+                logger.debug("racer: shuffle (%d)", i)
+                random.shuffle(cgs)
+
+                logger.debug("racer: split (%d)", i)
+                del_cgs, keep_cgs = cgs[:cg_cycle], cgs[cg_cycle:]
+
+                logger.debug("racer: delete (%d)", i)
+                for cg in del_cgs:
+                    quick_delete_cg(cg)
+
+                logger.debug("racer: remake (%d)", i)
+
+                cgs = keep_cgs + [
+                    quick_create_cg(str(uuid.uuid4()), self.parent_cg_path)
+                    for _ in range(cg_cycle)
+                ]
+
+                logger.debug("racer: done (%d)", i)
+
+            for cg in cgs:
+                quick_delete_cg(cg)
+
+        t = threading.Thread(target=racer)
+        t.start()
+
+        job_q = queue.Queue()
+        activity_q = queue.Queue()
+        index = CgroupIndex(self.parent_cg_path, job_q, activity_q)
+        index.open()
+
+        ready_q.get(timeout=5)
+
+        try:
+            for _ in range(index_syncs):
+                index.sync()
+            index.close()
+        except Exception:
+            logger.error("sync errorred")  # Make logs more usable
+            raise
+        finally:
+            exit_q.put(None)
+            t.join(5)
 
     def test_open_close(self):
         cg_path = create_random_cg(self.parent_cg_path)
