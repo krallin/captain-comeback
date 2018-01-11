@@ -65,6 +65,15 @@ class Cgroup(object):
 
     def on_oom_event(self, job_queue):
         logger.warning("%s: under_oom", self.name())
+
+        try:
+            memory_stat_lines = self.memory_stat_lines()
+        except EnvironmentError as e:
+            logger.warning("%s: failed to read memory stat: %s", self.name(), e)
+        else:
+            for l in memory_stat_lines:
+                logger.info("%s: %s", self.name(), l)
+
         job_queue.put(RestartRequestedMessage(self))
 
     def wakeup(self, job_queue, raise_for_stale=False):
@@ -115,6 +124,10 @@ class Cgroup(object):
                 pass
         return out
 
+    def memory_stat_lines(self):
+        with open(self._memory_stat_file_path()) as f:
+            return [l.strip() for l in f.readlines()]
+
     def _oom_control_file_path(self):
         return os.path.join(self.path, "memory.oom_control")
 
@@ -126,3 +139,6 @@ class Cgroup(object):
 
     def _procs_file_path(self):
         return os.path.join(self.path, "cgroup.procs")
+
+    def _memory_stat_file_path(self):
+        return os.path.join(self.path, "memory.stat")

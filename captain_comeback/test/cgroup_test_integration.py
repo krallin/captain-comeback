@@ -494,3 +494,9 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
             self.assertIsInstance(proc["memory_info"].rss, int)
             self.assertIsInstance(proc["cmdline"], list)
             self.assertIn(proc["status"], PROC_STATUSES_RAW.keys())
+
+    def test_memory_stat(self):
+        cg_path = create_random_cg(self.parent_cg_path)
+        cg = Cgroup(cg_path)
+        lines = cg.memory_stat_lines()
+        self.assertEqual("cache 0", lines[0])
