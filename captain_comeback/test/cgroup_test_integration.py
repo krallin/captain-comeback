@@ -129,13 +129,17 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
 
         # Check that the CG was added to the path hash
         self.assertEqual(1, len(index._path_hash))
-        self.assertEqual(1, len(index._efd_hash))
+
+        # And that we have 2 EFDs
+        self.assertEqual(2, len(index._efd_hash))
 
         # Check that the CG was registered (adding it again will cause an
         # error)
         cg = index._path_hash[cg_path]
         self.assertRaises(EnvironmentError, index.epl.register,
-                          cg.event_fileno())
+                          cg.event_oom.fileno())
+        self.assertRaises(EnvironmentError, index.epl.register,
+                          cg.event_pressure.fileno())
 
         index.close()
 
@@ -198,7 +202,12 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
         trigger_oom(cg_path)
         index.poll(10)
 
-        self.assertHasMessageForCg(job_q, RestartRequestedMessage, cg_path)
+        # We might receive a few pressure notifications before we finally get
+        # the OOM event. So, wait for the message 100 times.
+        for _ in self.assertEvnetuallyHasMessageForCg(
+            job_q, RestartRequestedMessage, cg_path
+        ):
+            index.poll(1)
 
         index.close()
 
@@ -226,7 +235,12 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
         trigger_oom(cg_path)
         index.poll(10)
 
-        self.assertHasMessageForCg(job_q, RestartRequestedMessage, cg_path)
+        # We might receive a few pressure notifications before we finally get
+        # the OOM event. So, wait for the message 100 times.
+        for _ in self.assertEvnetuallyHasMessageForCg(
+            job_q, RestartRequestedMessage, cg_path
+        ):
+            index.poll(1)
 
         index.close()
 
@@ -391,12 +405,12 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
 
         cg = Cgroup(cg_path)
         cg.open()
-        cg.wakeup(queue.Queue())
+        cg.wakeup(queue.Queue(), None)
         self.assertEqual("0", cg.oom_control_status()["oom_kill_disable"])
 
         # The OOM Killer should be disabled if there is a task limit
         cg.set_memory_limit_in_bytes(1024)
-        cg.wakeup(queue.Queue())
+        cg.wakeup(queue.Queue(), None)
         self.assertEqual("1", cg.oom_control_status()["oom_kill_disable"])
 
         cg.close()
@@ -410,8 +424,8 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
         delete_cg(cg_path)
 
         q = queue.Queue()
-        cg.wakeup(q)
-        self.assertRaises(EnvironmentError, cg.wakeup, q, raise_for_stale=True)
+        cg.wakeup(q, None)
+        self.assertRaises(EnvironmentError, cg.wakeup, q, None, raise_for_stale=True)
 
         cg.close()
 
@@ -438,18 +452,18 @@ class CgroupTestIntegration(unittest.TestCase, QueueAssertionHelper):
         cg = Cgroup(cg_path)
         cg.open()
 
-        cg.wakeup(q)
+        cg.wakeup(q, None)
         self.assertHasNoMessages(q)
 
         set_memlimit(cg_path)
-        cg.wakeup(q)
+        cg.wakeup(q, None)
         self.assertHasNoMessages(q)
 
         trigger_oom(cg_path)
 
         # The test program should fill 128 MB rather fast; give it 10s
         for _ in range(100):
-            cg.wakeup(q)
+            cg.wakeup(q, None)
             try:
                 msg = q.get_nowait()
             except queue.Empty:

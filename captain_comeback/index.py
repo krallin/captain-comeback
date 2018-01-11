@@ -21,17 +21,22 @@ class CgroupIndex(object):
 
     def register(self, cg):
         logger.info("%s: registering", cg.name())
-        self._efd_hash[cg.event_fileno()] = cg
+
+        for fd in cg.event_fds():
+            self._efd_hash[fd] = cg
         self._path_hash[cg.path] = cg
-        self.epl.register(cg.event_fileno(), select.EPOLLIN)
+        for fd in cg.event_fds():
+            self.epl.register(fd, select.EPOLLIN)
         self.activity_queue.put(NewCgroupMessage(cg))
 
     def deregister(self, cg):
         logger.info("%s: deregistering", cg.name())
         self.activity_queue.put(StaleCgroupMessage(cg))
-        self.epl.unregister(cg.event_fileno())
+        for fd in cg.event_fds():
+            self.epl.unregister(fd)
         self._path_hash.pop(cg.path)
-        self._efd_hash.pop(cg.event_fileno())
+        for fd in cg.event_fds():
+            self._efd_hash.pop(fd)
 
     def sync(self):
         logger.debug("syncing cgroups")
@@ -43,7 +48,7 @@ class CgroupIndex(object):
         # killer).
         for cg in list(self._path_hash.values()):
             try:
-                cg.wakeup(self.job_queue, raise_for_stale=True)
+                cg.wakeup(self.job_queue, None, raise_for_stale=True)
             except EnvironmentError:
                 self.deregister(cg)
                 cg.close()
@@ -73,18 +78,21 @@ class CgroupIndex(object):
                 logger.warning("%s: error opening new cg: %s", cg.name(), e)
             else:
                 self.register(cg)
-                cg.wakeup(self.job_queue)
+                cg.wakeup(self.job_queue, None)
 
     def poll(self, timeout):
         events = self.epl.poll(timeout)
-        for efd, event in events:
+        for fd, event in events:
             if not event & select.EPOLLIN:
                 raise Exception("Unexpected event: {0}".format(event))
 
-            # Handle event and ackownledge
-            cg = self._efd_hash[efd]
-            cg.wakeup(self.job_queue)
-            cg.event.read()
+            # Handle event
+            cg = self._efd_hash[fd]
+            cg.wakeup(self.job_queue, fd)
+
+            # Acknowledge so we don't get notified again. We need 8 bytes.
+            # http://man7.org/linux/man-pages/man2/read.2.html
+            os.read(fd, 8)
 
     def open(self):
         assert self.epl is None, "already open"

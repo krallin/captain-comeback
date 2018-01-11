@@ -7,10 +7,17 @@ from six.moves import queue
 
 from captain_comeback.cgroup import Cgroup
 
+from captain_comeback.test.queue_assertion_helper import (
+        QueueAssertionHelper)
 
-class CgroupTestUnit(unittest.TestCase):
+class CgroupTestUnit(unittest.TestCase, QueueAssertionHelper):
     def setUp(self):
         self.mock_cg = tempfile.mkdtemp()
+
+        self.write_oom_control()
+        with open(self.cg_path("memory.pressure_level"), "w") as f:
+            f.write('')
+
         self.monitor = Cgroup(self.mock_cg)
         self.queue = queue.Queue()
 
@@ -27,6 +34,11 @@ class CgroupTestUnit(unittest.TestCase):
             f.write("\n".join(control))
             f.write("\n")
 
+    def write_memory_usage(self, memory_usage=12345):
+        with open(self.cg_path("memory.usage_in_bytes"), "w") as f:
+            f.write(str(memory_usage))
+            f.write("\n")
+
     def write_memory_limit(self, memory_limit=9223372036854771712):
         with open(self.cg_path("memory.limit_in_bytes"), "w") as f:
             f.write(str(memory_limit))
@@ -40,20 +52,26 @@ class CgroupTestUnit(unittest.TestCase):
     def test_open(self):
         self.write_oom_control()
         self.monitor.open()
-        evt_fileno = self.monitor.event_fileno()
-        oom_control_fileno = self.monitor.oom_control.fileno()
+
+        expected = "{0} {1}\n{2} {3} {4}\n".format(
+                self.monitor.event_oom.fileno(),
+                self.monitor.oom_control.fileno(),
+                self.monitor.event_pressure.fileno(),
+                self.monitor.memory_pressure.fileno(),
+                "critical"
+        )
+
         self.monitor.close()
 
         with open(self.cg_path("cgroup.event_control")) as f:
-            e = "{0} {1}\n".format(evt_fileno, oom_control_fileno)
-            self.assertEqual(e, f.read())
+            self.assertEqual(expected, f.read())
 
     def test_wakeup_disable_oom_killer(self):
         self.write_oom_control()
         self.write_memory_limit(1024)
 
         self.monitor.open()
-        self.monitor.wakeup(self.queue)
+        self.monitor.wakeup(self.queue, None)
         self.monitor.close()
 
         with open(self.cg_path("memory.oom_control")) as f:
@@ -64,7 +82,7 @@ class CgroupTestUnit(unittest.TestCase):
         self.write_memory_limit(1024)
 
         self.monitor.open()
-        self.monitor.wakeup(self.queue)
+        self.monitor.wakeup(self.queue, None)
         self.monitor.close()
 
         # File shoud not have been touched
@@ -76,7 +94,7 @@ class CgroupTestUnit(unittest.TestCase):
         self.write_memory_limit()
 
         self.monitor.open()
-        self.monitor.wakeup(self.queue)
+        self.monitor.wakeup(self.queue, None)
         self.monitor.close()
 
         # File shoud not have been touched
@@ -89,14 +107,34 @@ class CgroupTestUnit(unittest.TestCase):
         self.monitor.open()
 
         os.close(self.monitor.oom_control.fileno())
-        self.monitor.wakeup(self.queue)
-        self.assertRaises(EnvironmentError, self.monitor.wakeup, self.queue,
-                          raise_for_stale=True)
+        self.monitor.wakeup(self.queue, None)
+        self.assertRaises(EnvironmentError, self.monitor.wakeup, None,
+                          self.queue, raise_for_stale=True)
 
         # Close the other FD manually. We still need to attempt closing the
         # wrapper to avoid a resource warning.
-        os.close(self.monitor.event_fileno())
+        os.close(self.monitor.event_oom.fileno())
         try:
             self.monitor.oom_control.close()
         except EnvironmentError:
             pass
+
+    def test_wakeup_pressure(self):
+        self.monitor.open()
+
+        self.write_memory_usage()
+        self.write_memory_limit()
+
+        self.monitor.wakeup(
+            self.queue,
+            self.monitor.event_pressure.fileno()
+        )
+        self.assertHasNoMessages(self.queue)
+
+    def test_wakeup_pressure_stale(self):
+        self.monitor.open()
+        self.monitor.wakeup(
+            self.queue,
+            self.monitor.event_pressure.fileno()
+        )
+        self.assertHasNoMessages(self.queue)
