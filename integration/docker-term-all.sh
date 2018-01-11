@@ -13,7 +13,7 @@ cd "$HERE"
 TEST_PORT=4628
 
 echo "Running container"
-cid="$(docker run -d --publish "$TEST_PORT":80 alpine sh -c 'httpd -f')"
+cid="$(docker run -d --publish "$TEST_PORT":80 alpine:3.6 sh -c 'httpd -f')"
 cleanup() {
   docker rm -f "$cid" >/dev/null 2>&1
 }
