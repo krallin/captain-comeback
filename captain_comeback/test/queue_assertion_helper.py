@@ -14,5 +14,19 @@ class QueueAssertionHelper(object):
         for k, v in attrs.items():
             self.assertEqual(v, getattr(msg, k))
 
+    def assertEvnetuallyHasMessageForCg(self, *args, **kwargs):
+        for i in range(100):
+            yield
+
+            try:
+                self.assertHasMessageForCg(*args, **kwargs)
+            except AssertionError:
+                pass
+            else:
+                break
+        else:
+            self.assertHasMessageForCg(*args, **kwargs)
+
+
     def assertHasNoMessages(self, q):
         self.assertRaises(queue.Empty, q.get_nowait)

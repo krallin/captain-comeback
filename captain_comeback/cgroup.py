@@ -14,7 +14,8 @@ class Cgroup(object):
     def __init__(self, path):
         self.path = path
         self.oom_control = None
-        self.event = None
+        self.event_oom = None
+        self.event_pressure = None
 
     def name(self):
         return self.path.split("/")[-1]
@@ -22,33 +23,55 @@ class Cgroup(object):
     def open(self):
         e = "{0} is already open".format(self.name())
         assert self.oom_control is None, e
-        assert self.event is None, e
+        assert self.event_oom is None, e
+        assert self.event_pressure is None, e
 
         # TODO: CLOEXEC?
         logger.debug("%s: open", self.name())
         self.oom_control = open(self._oom_control_file_path(), "r")
-        self.event = linuxfd.eventfd(initval=0, nonBlocking=True)
+        self.event_oom = linuxfd.eventfd(initval=0, nonBlocking=True)
+        logger.info("%s: event_oom=%d", self.name(), self.event_oom.fileno())
 
-        req = "{0} {1}\n".format(self.event_fileno(),
-                                 self.oom_control.fileno())
-        with open(self._evt_control_file_path(), "w") as evt_control:
-            evt_control.write(req)
+        oom_control_req = "{0} {1}\n".format(
+            self.event_oom.fileno(),
+            self.oom_control.fileno()
+        )
+        with open(self._evt_control_file_path(), "a") as evt_control:
+            evt_control.write(oom_control_req)
+
+        self.memory_pressure = open(self._memory_pressure_file_path(), "r")
+        self.event_pressure = linuxfd.eventfd(initval=0, nonBlocking=True)
+        logger.info("%s: event_pressure=%d", self.name(), self.event_pressure.fileno())
+
+        memory_pressure_req = "{0} {1} critical\n".format(
+            self.event_pressure.fileno(),
+            self.memory_pressure.fileno()
+        )
+        with open(self._evt_control_file_path(), "a") as evt_control:
+            evt_control.write(memory_pressure_req)
 
     def close(self):
         e = "{0} is already closed".format(self.name())
         assert self.oom_control is not None, e
-        assert self.event is not None, e
+        assert self.event_oom is not None, e
+        assert self.event_pressure is not None, e
 
         logger.debug("%s: close", self.name())
 
         self.oom_control.close()
         self.oom_control = None
 
-        os.close(self.event.fileno())
-        self.event = None
+        os.close(self.event_oom.fileno())
+        self.event_oom = None
 
-    def event_fileno(self):
-        return self.event.fileno()
+        self.memory_pressure.close()
+        self.memory_pressure = None
+
+        os.close(self.event_pressure.fileno())
+        self.event_pressure = None
+
+    def event_fds(self):
+        return [self.event_oom.fileno(), self.event_pressure.fileno()]
 
     def on_oom_killer_enabled(self, _job_queue):
         memory_limit = self.memory_limit_in_bytes()
@@ -67,9 +90,30 @@ class Cgroup(object):
         logger.warning("%s: under_oom", self.name())
         job_queue.put(RestartRequestedMessage(self))
 
-    def wakeup(self, job_queue, raise_for_stale=False):
-        logger.debug("%s: wakeup", self.name())
+    def wakeup(self, job_queue, fd, raise_for_stale=False):
+        logger.debug("%s: wakeup (%s)", self.name(), str(fd or "n/a"))
 
+        # Woke up due to OOM pressure.
+        if fd == self.event_pressure.fileno():
+            try:
+                usage = self.memory_usage_in_bytes()
+                limit = self.memory_limit_in_bytes()
+                logger.warning(
+                    "%s: under_pressure %.2f (%d / %d)",
+                    self.name(),
+                    float(usage) / float(limit),
+                    usage,
+                    limit
+                )
+            except EnvironmentError:
+                logger.warning(
+                    "%s: under_pressure ? (? / ?)",
+                    self.name()
+                )
+
+            return
+
+        # Regular wakeup or oom event wakeup: we check the oom_control_status.
         try:
             oom_control_status = self.oom_control_status()
 
@@ -88,6 +132,10 @@ class Cgroup(object):
         self.oom_control.seek(0)
         lines = self.oom_control.readlines()
         return dict([entry.strip().split(' ') for entry in lines])
+
+    def memory_usage_in_bytes(self):
+        with open(self._memory_usage_file_path(), "r") as f:
+            return int(f.read())
 
     def memory_limit_in_bytes(self):
         with open(self._memory_limit_file_path(), "r") as f:
@@ -120,6 +168,12 @@ class Cgroup(object):
 
     def _evt_control_file_path(self):
         return os.path.join(self.path, "cgroup.event_control")
+
+    def _memory_pressure_file_path(self):
+        return os.path.join(self.path, "memory.pressure_level")
+
+    def _memory_usage_file_path(self):
+        return os.path.join(self.path, "memory.usage_in_bytes")
 
     def _memory_limit_file_path(self):
         return os.path.join(self.path, "memory.limit_in_bytes")
