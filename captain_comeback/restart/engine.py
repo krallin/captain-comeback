@@ -5,17 +5,20 @@ import logging
 import threading
 import time
 import errno
+import subprocess
 
 import psutil
 
 from captain_comeback.restart.messages import (RestartRequestedMessage,
-                                               RestartCompleteMessage)
+                                               RestartCompleteMessage,
+                                               MemoryPressureMessage)
 from captain_comeback.activity.messages import (RestartCgroupMessage,
                                                 RestartTimeoutMessage)
 
 logger = logging.getLogger()
 
 RESTART_STATE_POLLS = 20
+FSYNC_MAX_FREQUENCY = 5
 
 
 class RestartEngine(object):
@@ -24,8 +27,10 @@ class RestartEngine(object):
         self.grace_period = grace_period
         self.job_queue = job_queue
         self.activity_queue = activity_queue
+
         self._counter = 0
         self._running_restarts = set()
+        self._last_fsync = 0
 
     def _handle_restart_requested(self, cg):
         if cg in self._running_restarts:
@@ -55,6 +60,21 @@ class RestartEngine(object):
         logger.debug("%s: registering restart complete", cg.name())
         self._running_restarts.remove(cg)
 
+    def _handle_memory_pressure(self, cg):
+        logger.debug("%s: memory pressure", cg.name())
+        now = time.time()
+
+        if (now - self._last_fsync) <= FSYNC_MAX_FREQUENCY:
+            logger.warning("%s: fsync is happening too often")
+            return
+
+        self._last_fsync = now
+
+        try:
+            threading.Thread(target=fsync, name="fsync").start()
+        except RuntimeError as e:
+            logger.error("%s: could not spawn fsync thread: %s", cg.name(), e)
+
     def run(self):
         # TODO: Exit everything when this fails
         logger.info("ready to restart containers")
@@ -64,8 +84,21 @@ class RestartEngine(object):
                 self._handle_restart_requested(message.cg)
             elif isinstance(message, RestartCompleteMessage):
                 self._handle_restart_complete(message.cg)
+            elif isinstance(message, MemoryPressureMessage):
+                self._handle_memory_pressure(message.cg)
             else:
                 raise Exception("Unexpected message: {0}".format(message))
+
+
+def fsync():
+    logger.info("fsync: start")
+
+    try:
+        subprocess.check_call(["sync"])
+    except subprocess.CalledProcessError:
+        logger.error("fsync: failed")
+    else:
+        logger.info("fsync: done")
 
 
 def restart(adapter, grace_period, cg, job_queue, activity_queue):
