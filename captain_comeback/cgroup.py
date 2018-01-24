@@ -5,7 +5,8 @@ import logging
 import linuxfd
 import psutil
 
-from captain_comeback.restart.messages import RestartRequestedMessage
+from captain_comeback.restart.messages import (RestartRequestedMessage,
+                                               MemoryPressureMessage)
 
 logger = logging.getLogger()
 
@@ -119,6 +120,8 @@ class Cgroup(object):
                     "%s: under_pressure ? (? / ?)",
                     self.name()
                 )
+
+            job_queue.put(MemoryPressureMessage(self))
 
             return
 

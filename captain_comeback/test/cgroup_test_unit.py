@@ -6,9 +6,12 @@ import unittest
 from six.moves import queue
 
 from captain_comeback.cgroup import Cgroup
+from captain_comeback.restart.messages import (RestartRequestedMessage,
+                                               MemoryPressureMessage)
 
 from captain_comeback.test.queue_assertion_helper import (
         QueueAssertionHelper)
+
 
 class CgroupTestUnit(unittest.TestCase, QueueAssertionHelper):
     def setUp(self):
@@ -66,7 +69,7 @@ class CgroupTestUnit(unittest.TestCase, QueueAssertionHelper):
         with open(self.cg_path("cgroup.event_control")) as f:
             self.assertEqual(expected, f.read())
 
-    def test_wakeup_disable_oom_killer(self):
+    def test_wakeup_with_limits_and_disable_oom_killer(self):
         self.write_oom_control()
         self.write_memory_limit(1024)
 
@@ -77,7 +80,7 @@ class CgroupTestUnit(unittest.TestCase, QueueAssertionHelper):
         with open(self.cg_path("memory.oom_control")) as f:
             self.assertEqual("1\n", f.read())
 
-    def test_wakeup_oom_killer_is_disabled(self):
+    def test_wakeup_with_oom_killer_disabled_is_noop(self):
         self.write_oom_control(oom_kill_disable="1")
         self.write_memory_limit(1024)
 
@@ -89,7 +92,7 @@ class CgroupTestUnit(unittest.TestCase, QueueAssertionHelper):
         with open(self.cg_path("memory.oom_control")) as f:
             self.assertEqual("oom_kill_disable 1\n", f.readline())
 
-    def test_wakeup_no_memory_limit(self):
+    def test_wakeup_without_limits_is_noop(self):
         self.write_oom_control(oom_kill_disable="0")
         self.write_memory_limit()
 
@@ -101,7 +104,7 @@ class CgroupTestUnit(unittest.TestCase, QueueAssertionHelper):
         with open(self.cg_path("memory.oom_control")) as f:
             self.assertEqual("oom_kill_disable 0\n", f.readline())
 
-    def test_wakeup_stale(self):
+    def test_wakeup_with_stale_group_does_not_raise(self):
         self.write_oom_control(oom_kill_disable="0")
 
         self.monitor.open()
@@ -119,7 +122,19 @@ class CgroupTestUnit(unittest.TestCase, QueueAssertionHelper):
         except EnvironmentError:
             pass
 
-    def test_wakeup_pressure(self):
+    def test_wakeup_under_oom_requests_restart(self):
+        self.monitor.open()
+
+        self.write_oom_control(oom_kill_disable="1", under_oom="1")
+        self.monitor.wakeup(self.queue, None)
+
+        self.assertHasMessageForCg(
+            self.queue,
+            RestartRequestedMessage,
+            self.mock_cg
+        )
+
+    def test_wakeup_memory_pressure_notifies(self):
         self.monitor.open()
 
         self.write_memory_usage()
@@ -129,12 +144,23 @@ class CgroupTestUnit(unittest.TestCase, QueueAssertionHelper):
             self.queue,
             self.monitor.event_pressure.fileno()
         )
-        self.assertHasNoMessages(self.queue)
 
-    def test_wakeup_pressure_stale(self):
+        self.assertHasMessageForCg(
+            self.queue,
+            MemoryPressureMessage,
+            self.mock_cg
+        )
+
+    def test_pressure_wakeup_with_stale_group_does_not_raise(self):
         self.monitor.open()
+
         self.monitor.wakeup(
             self.queue,
             self.monitor.event_pressure.fileno()
         )
-        self.assertHasNoMessages(self.queue)
+
+        self.assertHasMessageForCg(
+            self.queue,
+            MemoryPressureMessage,
+            self.mock_cg
+        )

@@ -11,3 +11,8 @@ class RestartRequestedMessage(object):
 class RestartCompleteMessage(object):
     def __init__(self, cg):
         self.cg = cg
+
+
+class MemoryPressureMessage(object):
+    def __init__(self, cg):
+        self.cg = cg
