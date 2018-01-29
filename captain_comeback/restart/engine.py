@@ -65,7 +65,7 @@ class RestartEngine(object):
         now = time.time()
 
         if (now - self._last_fsync) <= FSYNC_MAX_FREQUENCY:
-            logger.warning("%s: fsync is happening too often")
+            logger.warning("%s: fsync is happening too often", cg.name())
             return
 
         self._last_fsync = now
