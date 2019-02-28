@@ -27,7 +27,7 @@ setup(
     long_description=readme + '\n\n' + changelog,
     author="Thomas Orozco",
     author_email='thomas@aptible.com',
-    url='https://github.com/krallin/captain_comeback',
+    url='https://github.com/aptible/captain_comeback',
     packages=[
         'captain_comeback',
         'captain_comeback.restart',
